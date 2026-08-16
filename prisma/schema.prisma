@@ -1,0 +1,56 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+enum OrderStatus {
+  NEW
+  PACKED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum DeliveryStatus {
+  NOT_SENT
+  SENT
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model Order {
+  id                 String             @id @default(uuid())
+  orderId            String             @unique // Human-readable e.g., NOX-00001
+  customerName       String
+  phone              String
+  address            String
+  pincode            String
+  quantity           Int
+  amount             Int                // Stored in paise (e.g. ₹999 = 99900)
+  paymentStatus      PaymentStatus      @default(PENDING)
+  paymentId          String?            // Razorpay payment ID
+  razorpayOrderId    String             @unique // Razorpay order ID
+  orderStatus        OrderStatus        @default(NEW)
+  notificationStatus NotificationStatus @default(PENDING)
+  deliveryStatus     DeliveryStatus     @default(NOT_SENT)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+}
+
+model OrderCounter {
+  id      Int @id @default(1)
+  counter Int @default(0)
+}

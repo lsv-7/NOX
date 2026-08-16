@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+:root {
+  --background: #FAFAFA;
+  --foreground: #292929;
+  --accent: #C9B27C;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --color-navbar-bg: #FAFAFA;
+  --color-hero-primary-bg: #D3D9F3;
+  --color-hero-secondary-bg: #FAFAFA;
+  --color-brand-accent: #969FE0;
+  --color-hero-heading: #292929;
+  --color-cta-btn: #2C42A5;
+  --color-cta-btn-text: #FFFFFF;
+  --color-product-card: #FFFFFF;
+  --color-product-card-border: #D3D9F3;
+  --color-ingredient-bg: #F5F7EE;
+  --color-ingredient-highlight: #B8E89A;
+  --color-premium-accent: #C9B27C;
+  --color-footer-bg: #292929;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+/* Custom fine-line input styles for a premium brand */
+input, textarea {
+  border-bottom: 1px solid #E5E5E5;
+  transition: border-color 0.2s ease;
+}
+
+input:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
