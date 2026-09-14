@@ -2,9 +2,20 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { db } from "@/lib/db";
 import { hashPassword } from "@/lib/customer-auth";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export async function POST(request: Request) {
   try {
+    // 1. Rate limiting: 10 attempts per 15 minutes per IP
+    const clientIp = getClientIp(request);
+    const rl = await checkRateLimit(`reset:${clientIp}`, 10, 15 * 60);
+    if (!rl.success) {
+      return NextResponse.json(
+        { error: "Too many password reset attempts. Please try again later." },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
     const { token, newPassword } = body;
 
@@ -68,10 +79,13 @@ export async function POST(request: Request) {
     // Hash new password using bcrypt (12 rounds)
     const newPasswordHash = await hashPassword(newPassword);
 
-    // Update customer password
+    // Update customer password and passwordChangedAt (invalidates existing sessions)
     await db.customer.update({
       where: { id: customer.id },
-      data: { passwordHash: newPasswordHash },
+      data: {
+        passwordHash: newPasswordHash,
+        passwordChangedAt: new Date(),
+      },
     });
 
     // Invalidate reset token immediately (single-use)

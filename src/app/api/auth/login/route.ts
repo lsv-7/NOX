@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { verifyPassword, createCustomerSession } from "@/lib/customer-auth";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 function normalizePhone(phone: string): string {
   const digits = phone.replace(/\D/g, "");
@@ -9,6 +10,16 @@ function normalizePhone(phone: string): string {
 
 export async function POST(request: Request) {
   try {
+    // 1. Rate limiting: 10 attempts per 15 minutes per IP
+    const clientIp = getClientIp(request);
+    const rl = await checkRateLimit(`login:${clientIp}`, 10, 15 * 60);
+    if (!rl.success) {
+      return NextResponse.json(
+        { error: "Too many login attempts. Please try again later." },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
     const { identifier, email, phone, password } = body;
 

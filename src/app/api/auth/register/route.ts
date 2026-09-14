@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { hashPassword, createCustomerSession } from "@/lib/customer-auth";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 const INDIAN_PHONE_REGEX = /^(?:\+91|91|0)?[6-9]\d{9}$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -12,6 +13,16 @@ function normalizePhone(phone: string): string {
 
 export async function POST(request: Request) {
   try {
+    // 1. Rate limiting: 10 registrations per hour per IP
+    const clientIp = getClientIp(request);
+    const rl = await checkRateLimit(`reg:${clientIp}`, 10, 60 * 60);
+    if (!rl.success) {
+      return NextResponse.json(
+        { error: "Too many registration attempts. Please try again later." },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
     const { name, phone, email, password } = body;
 
@@ -79,6 +90,7 @@ export async function POST(request: Request) {
         phone: normalizedPhone,
         email: normalizedEmail,
         passwordHash,
+        passwordChangedAt: new Date(),
       },
     });
 

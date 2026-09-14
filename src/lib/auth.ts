@@ -21,8 +21,10 @@ export async function createAdminSession(passwordInput: string): Promise<boolean
     return false;
   }
 
-  // Verify password matches
-  if (passwordInput !== adminPassword) {
+  // Verify password matches using constant-time comparison
+  const inputBuf = Buffer.from(passwordInput, "utf-8");
+  const adminBuf = Buffer.from(adminPassword, "utf-8");
+  if (inputBuf.length !== adminBuf.length || !crypto.timingSafeEqual(inputBuf, adminBuf)) {
     return false;
   }
 
@@ -58,7 +60,8 @@ export async function verifyAdminSession(): Promise<boolean> {
       return false;
     }
 
-    const parts = cookie.value.split(":");
+    const rawValue = decodeURIComponent(cookie.value);
+    const parts = rawValue.split(":");
     if (parts.length !== 3) {
       return false;
     }
@@ -76,10 +79,14 @@ export async function verifyAdminSession(): Promise<boolean> {
     // Verify integrity using HMAC signature
     const payload = `${sessionId}:${expiry}`;
     const expectedSignature = generateSessionSignature(payload, sessionSecret);
-    return crypto.timingSafeEqual(
-      Buffer.from(signature, "hex"),
-      Buffer.from(expectedSignature, "hex")
-    );
+    const sigBuffer = Buffer.from(signature, "hex");
+    const expectedBuffer = Buffer.from(expectedSignature, "hex");
+
+    if (sigBuffer.length !== expectedBuffer.length) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(sigBuffer, expectedBuffer);
   } catch (e) {
     console.error("Session verification failed with error:", e);
     return false;

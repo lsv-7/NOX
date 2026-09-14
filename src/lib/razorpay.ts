@@ -79,7 +79,14 @@ export const razorpayHelper = {
       .update(body)
       .digest("hex");
 
-    return expectedSignature === razorpaySignature;
+    const expectedBuf = Buffer.from(expectedSignature, "utf-8");
+    const actualBuf = Buffer.from(razorpaySignature, "utf-8");
+
+    if (expectedBuf.length !== actualBuf.length) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(expectedBuf, actualBuf);
   },
 
   verifyWebhookSignature(body: string, signature: string): boolean {
@@ -98,6 +105,13 @@ export const razorpayHelper = {
       .update(body)
       .digest("hex");
 
-    return expectedSignature === signature;
+    const expectedBuf = Buffer.from(expectedSignature, "utf-8");
+    const actualBuf = Buffer.from(signature, "utf-8");
+
+    if (expectedBuf.length !== actualBuf.length) {
+      return false;
+    }
+
+    return crypto.timingSafeEqual(expectedBuf, actualBuf);
   },
 };

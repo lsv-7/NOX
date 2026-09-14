@@ -4,6 +4,6 @@ import { defineConfig, env } from "prisma/config";
 export default defineConfig({
   schema: "prisma/schema.prisma",
   datasource: {
-    url: env("DATABASE_URL") || "postgresql://postgres:postgres@localhost:5432/nox?schema=public",
+    url: process.env.PRODUCTION_DATABASE_URL || env("DATABASE_URL"),
   },
 });

@@ -2,6 +2,7 @@ import React from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
+import { verifyCustomerSession } from "@/lib/customer-auth";
 import { CheckCircle2, ShieldCheck, Mail, ArrowRight } from "lucide-react";
 import { OrderTimeline } from "@/components/OrderTimeline";
 import { parseOrderItems } from "@/lib/order-utils";
@@ -13,13 +14,19 @@ interface PageProps {
 export default async function OrderConfirmationPage({ params }: PageProps) {
   const { orderId } = await params;
 
-  // Retrieve the order details
+  // 1. Authenticate customer session
+  const session = await verifyCustomerSession();
+  if (!session) {
+    return notFound();
+  }
+
+  // 2. Retrieve the order details
   const order = await db.order.findUnique({
     where: { orderId },
   });
 
-  // Verify the order exists and is PAID
-  if (!order || order.paymentStatus !== "PAID") {
+  // 3. Verify the order exists, is PAID, and strictly belongs to the authenticated customer
+  if (!order || order.paymentStatus !== "PAID" || order.customerId !== session.customerId) {
     return notFound();
   }
 

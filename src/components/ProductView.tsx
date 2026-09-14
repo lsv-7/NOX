@@ -13,11 +13,6 @@ interface ProductViewProps {
   isMockMode: boolean;
 }
 
-interface LocalSavedOrder {
-  orderId: string;
-  phone: string;
-}
-
 export default function ProductView({
   shippingChargeInr,
   isMockMode,
@@ -528,19 +523,6 @@ export default function ProductView({
               const verifyData = await verifyRes.json();
               if (verifyRes.ok && verifyData.success) {
                 sessionStorage.removeItem("nox_checkout_pending");
-
-                // Save order details to localStorage list
-                try {
-                  const saved = localStorage.getItem("nox_my_orders");
-                  const list: LocalSavedOrder[] = saved ? JSON.parse(saved) : [];
-                  if (!list.some((o) => o.orderId === verifyData.orderId)) {
-                    list.push({ orderId: verifyData.orderId, phone: phone.trim() });
-                    localStorage.setItem("nox_my_orders", JSON.stringify(list));
-                  }
-                } catch (e) {
-                  console.error("Local storage error:", e);
-                }
-
                 router.push(`/order-confirmation/${verifyData.orderId}`);
               } else {
                 router.push("/payment-failure");
@@ -597,18 +579,6 @@ export default function ProductView({
       const verifyData = await verifyRes.json();
       if (verifyRes.ok && verifyData.success) {
         sessionStorage.removeItem("nox_checkout_pending");
-
-        try {
-          const saved = localStorage.getItem("nox_my_orders");
-          const list: LocalSavedOrder[] = saved ? JSON.parse(saved) : [];
-          if (!list.some((o) => o.orderId === verifyData.orderId)) {
-            list.push({ orderId: verifyData.orderId, phone: phone.trim() });
-            localStorage.setItem("nox_my_orders", JSON.stringify(list));
-          }
-        } catch (e) {
-          console.error("Local storage error:", e);
-        }
-
         router.push(`/order-confirmation/${verifyData.orderId}`);
       } else {
         router.push("/payment-failure");

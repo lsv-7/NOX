@@ -1,8 +1,18 @@
 import { NextResponse } from "next/server";
 import { createAdminSession } from "@/lib/auth";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 export async function POST(request: Request) {
   try {
+    const clientIp = getClientIp(request);
+    const rl = await checkRateLimit(`admin_login:${clientIp}`, 5, 15 * 60);
+    if (!rl.success) {
+      return NextResponse.json(
+        { error: "Too many failed login attempts. Please try again later." },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
     const { password } = body;
 

@@ -13,6 +13,7 @@ export interface Customer {
   phone: string;
   email: string;
   passwordHash: string;
+  passwordChangedAt: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -75,6 +76,7 @@ function readMockDb(): MockDatabase {
       counter: data.counter || 0,
       customers: (data.customers || []).map((c: Customer) => ({
         ...c,
+        passwordChangedAt: c.passwordChangedAt ? new Date(c.passwordChangedAt) : new Date(c.createdAt),
         createdAt: new Date(c.createdAt),
         updatedAt: new Date(c.updatedAt),
       })),
@@ -324,6 +326,7 @@ export const db = {
         phone: string;
         email: string;
         passwordHash: string;
+        passwordChangedAt?: Date;
       };
     }): Promise<Customer> {
       if (isMockMode) {
@@ -335,6 +338,7 @@ export const db = {
           phone: args.data.phone,
           email: args.data.email,
           passwordHash: args.data.passwordHash,
+          passwordChangedAt: args.data.passwordChangedAt || new Date(),
           createdAt: new Date(),
           updatedAt: new Date(),
         };
@@ -353,6 +357,7 @@ export const db = {
       where: { id?: string; email?: string };
       data: {
         passwordHash?: string;
+        passwordChangedAt?: Date;
         name?: string;
         phone?: string;
       };
@@ -482,18 +487,12 @@ export const db = {
         writeMockDb(mockDb);
         return mockDb.counter;
       } else {
-        const result = await prismaClient!.$transaction(async (tx) => {
-          let counterRecord = await tx.orderCounter.findUnique({ where: { id: 1 } });
-          if (!counterRecord) {
-            counterRecord = await tx.orderCounter.create({ data: { id: 1, counter: 0 } });
-          }
-          const updated = await tx.orderCounter.update({
-            where: { id: 1 },
-            data: { counter: { increment: 1 } },
-          });
-          return updated.counter;
+        const updated = await prismaClient!.orderCounter.upsert({
+          where: { id: 1 },
+          update: { counter: { increment: 1 } },
+          create: { id: 1, counter: 1 },
         });
-        return result;
+        return updated.counter;
       }
     },
   },

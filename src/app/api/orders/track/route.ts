@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { db, Order } from "@/lib/db";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 // Regular expressions for validation
 const INDIAN_PHONE_REGEX = /^(?:\+91|91|0)?[6-9]\d{9}$/;
 const ORDER_ID_REGEX = /^NOX-\d{5,}$/i;
 
-// Helper to format safe order data
+// Helper to format safe order data (Zero PII: no name, address, pincode, items, or secrets)
 function extractSafeFields(order: Order) {
   return {
     orderId: order.orderId,
@@ -18,6 +19,16 @@ function extractSafeFields(order: Order) {
 
 export async function POST(request: Request) {
   try {
+    // 0. Abuse protection / Rate limiting: 10 lookups per 15 minutes per IP
+    const clientIp = getClientIp(request);
+    const rl = await checkRateLimit(`track:${clientIp}`, 10, 15 * 60);
+    if (!rl.success) {
+      return NextResponse.json(
+        { error: "Too many tracking lookups. Please try again later." },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
     const { orderId, phone, orders } = body;
 

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { razorpayHelper } from "@/lib/razorpay";
 import { verifyCustomerSession } from "@/lib/customer-auth";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 
 // Regular expressions for validation
 const INDIAN_PHONE_REGEX = /^(?:\+91|91|0)?[6-9]\d{9}$/;
@@ -9,7 +10,17 @@ const PINCODE_REGEX = /^\d{6}$/;
 
 export async function POST(request: Request) {
   try {
-    // 0. Enforce Customer Authentication (Strict session requirement, NO guest checkout)
+    // 0. Rate Limiting: 10 order initialization requests per minute per IP
+    const clientIp = getClientIp(request);
+    const rl = await checkRateLimit(`order_create:${clientIp}`, 10, 60);
+    if (!rl.success) {
+      return NextResponse.json(
+        { error: "Too many checkout requests. Please try again in a moment." },
+        { status: 429 }
+      );
+    }
+
+    // 1. Enforce Customer Authentication (Strict session requirement, NO guest checkout)
     const session = await verifyCustomerSession();
     if (!session) {
       return NextResponse.json(
@@ -53,8 +64,8 @@ export async function POST(request: Request) {
       for (const item of items) {
         const itemSize = (item.size === "15g" || item.size === "Small") ? "15g" : (item.size === "50g" || item.size === "Large") ? "50g" : null;
         const itemQty = parseInt(item.quantity, 10);
-        if (!itemSize || isNaN(itemQty) || itemQty <= 0) {
-          return NextResponse.json({ error: "Invalid item size or quantity" }, { status: 400 });
+        if (!itemSize || isNaN(itemQty) || itemQty <= 0 || itemQty > 50) {
+          return NextResponse.json({ error: "Invalid item size or quantity (max 50 units per variant)" }, { status: 400 });
         }
         const unitPrice = itemSize === "15g" ? 699 : 1299;
         const lineSubtotal = unitPrice * itemQty;
@@ -71,8 +82,8 @@ export async function POST(request: Request) {
     } else {
       // Backward-compatible fallback for single-item order creation
       const qty = parseInt(quantity, 10);
-      if (isNaN(qty) || qty <= 0) {
-        return NextResponse.json({ error: "Quantity must be a positive integer" }, { status: 400 });
+      if (isNaN(qty) || qty <= 0 || qty > 50) {
+        return NextResponse.json({ error: "Quantity must be a positive integer (max 50)" }, { status: 400 });
       }
       const selectedSize: "15g" | "50g" = (size === "Small" || size === "Small (50ml)" || size === "15g") ? "15g" : "50g";
       const productPriceInr = selectedSize === "15g" ? 699 : 1299;
@@ -130,12 +141,18 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Failed to record order details" }, { status: 500 });
     }
 
+    const razorpayKeyId = process.env.RAZORPAY_KEY_ID;
+    if (!razorpayKeyId && process.env.NODE_ENV === "production") {
+      console.error("Missing RAZORPAY_KEY_ID in production environment");
+      return NextResponse.json({ error: "Payment gateway configuration error" }, { status: 500 });
+    }
+
     // 6. Return response to frontend
     return NextResponse.json({
       orderId,
       razorpayOrderId: razorpayOrder.id,
       amount: totalAmountPaise,
-      keyId: process.env.RAZORPAY_KEY_ID || "rzp_test_mock_id_123",
+      keyId: razorpayKeyId || "rzp_test_mock_id_123",
       customerName: customerName.trim(),
       phone: phone.trim(),
       address: address.trim(),

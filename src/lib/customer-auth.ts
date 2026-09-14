@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import crypto from "crypto";
 import bcrypt from "bcryptjs";
+import { db } from "./db";
 
 const SESSION_COOKIE_NAME = "nox_customer_session";
 const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -9,7 +10,7 @@ function getSessionSecret(): string {
   const secret = process.env.NOX_CUSTOMER_SESSION_SECRET || process.env.NOX_ADMIN_SESSION_SECRET;
   if (!secret) {
     if (process.env.NODE_ENV === "production") {
-      throw new Error("NOX_CUSTOMER_SESSION_SECRET or NOX_ADMIN_SESSION_SECRET environment variable is required in production.");
+      throw new Error("NOX_CUSTOMER_SESSION_SECRET environment variable is required in production.");
     }
     return "nox_dev_fallback_session_secret_32chars_long_key";
   }
@@ -31,8 +32,9 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 
 export async function createCustomerSession(customerId: string): Promise<void> {
   const secret = getSessionSecret();
-  const expiry = Date.now() + SESSION_DURATION_MS;
-  const payload = `${customerId}:${expiry}`;
+  const issuedAt = Date.now();
+  const expiry = issuedAt + SESSION_DURATION_MS;
+  const payload = `${customerId}:${issuedAt}:${expiry}`;
   const signature = generateSignature(payload, secret);
   const token = `${payload}:${signature}`;
 
@@ -55,34 +57,61 @@ export async function verifyCustomerSession(): Promise<{ customerId: string } | 
       return null;
     }
 
-    const parts = cookie.value.split(":");
-    if (parts.length !== 3) {
+    const rawValue = decodeURIComponent(cookie.value);
+    const parts = rawValue.split(":");
+    let customerId = "";
+    let issuedAt = 0;
+    let expiry = 0;
+    let signature = "";
+    let payload = "";
+
+    if (parts.length === 4) {
+      // Modern format: customerId:issuedAt:expiry:signature
+      const [cId, issuedStr, expStr, sig] = parts;
+      customerId = cId;
+      issuedAt = parseInt(issuedStr, 10);
+      expiry = parseInt(expStr, 10);
+      signature = sig;
+      payload = `${customerId}:${issuedAt}:${expiry}`;
+    } else if (parts.length === 3) {
+      // Backward-compatible format: customerId:expiry:signature
+      const [cId, expStr, sig] = parts;
+      customerId = cId;
+      expiry = parseInt(expStr, 10);
+      signature = sig;
+      payload = `${customerId}:${expiry}`;
+    } else {
       return null;
     }
 
-    const [customerId, expiryStr, signature] = parts;
-    if (!customerId || !expiryStr || !signature) {
+    if (!customerId || isNaN(expiry) || expiry < Date.now() || !signature) {
       return null;
     }
 
-    const expiry = parseInt(expiryStr, 10);
-    if (isNaN(expiry) || expiry < Date.now()) {
-      return null;
-    }
-
-    const payload = `${customerId}:${expiry}`;
     const expectedSignature = generateSignature(payload, secret);
-
     const sigBuffer = Buffer.from(signature, "hex");
     const expectedBuffer = Buffer.from(expectedSignature, "hex");
 
-    if (sigBuffer.length !== expectedBuffer.length) {
+    if (sigBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(sigBuffer, expectedBuffer)) {
       return null;
     }
 
-    const isValid = crypto.timingSafeEqual(sigBuffer, expectedBuffer);
-    if (!isValid) {
+    // Verify customer existence in DB and check dedicated passwordChangedAt invalidation
+    const customer = await db.customer.findUnique({
+      where: { id: customerId },
+    });
+
+    if (!customer) {
       return null;
+    }
+
+    // If session was issued before a password change, invalidate session
+    if (issuedAt > 0 && customer.passwordChangedAt) {
+      const passwordChangedMs = new Date(customer.passwordChangedAt).getTime();
+      const issuedAtMs = issuedAt < 1e11 ? issuedAt * 1000 : issuedAt;
+      if (issuedAtMs < passwordChangedMs) {
+        return null;
+      }
     }
 
     return { customerId };
