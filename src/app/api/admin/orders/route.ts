@@ -11,6 +11,14 @@ export async function GET() {
     }
 
     const orders = await db.order.findMany();
+    
+    // Sort descending numerically by the numeric portion of orderId
+    orders.sort((a, b) => {
+      const numA = parseInt(a.orderId.replace(/\D/g, "") || "0", 10);
+      const numB = parseInt(b.orderId.replace(/\D/g, "") || "0", 10);
+      return numB - numA;
+    });
+
     return NextResponse.json({ orders });
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : "Unknown error";

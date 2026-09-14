@@ -124,29 +124,35 @@ export default async function Page() {
           </div>
         </section>
 
-        {/* Contact/Support Section (LIGHT - Warm Ivory Surface) */}
-        <section id="contact" className="py-24 bg-[#F5F0E6] text-[#151515] scroll-mt-20">
+        {/* Contact/Support Section (DARK - Charcoal Background) */}
+        <section id="contact" className="py-24 bg-[#0D0E11] text-[#F5F0E6] scroll-mt-20">
           <div className="max-w-2xl mx-auto text-center px-6">
             <span className="text-[10px] uppercase tracking-[0.3em] text-[#D4A72C] font-semibold">Get in Touch</span>
-            <h2 className="font-serif text-3xl font-light text-[#151515] mt-3 mb-10 tracking-wide">Customer Relations</h2>
+            <h2 className="font-serif text-3xl font-light text-[#F5F0E6] mt-3 mb-10 tracking-wide">Customer Relations</h2>
             
-            <div className="bg-white border border-[#CFC5B4] rounded-2xl p-8 md:p-10 shadow-sm grid grid-cols-1 sm:grid-cols-3 gap-8 text-xs font-light">
+            <div className="bg-[#08090B] border border-[rgba(212,167,44,0.22)] rounded-2xl p-8 md:p-10 shadow-xl grid grid-cols-1 sm:grid-cols-3 gap-8 text-xs font-light">
               <div className="flex flex-col items-center">
                 <Mail className="w-5 h-5 text-[#D4A72C] mb-2.5" />
-                <span className="uppercase tracking-[0.2em] text-[#34302A] font-semibold mb-1 text-[9px]">Email</span>
-                <span className="text-[#151515] font-semibold italic">[support@nox.in]</span>
+                <span className="uppercase tracking-[0.2em] text-[#D4A72C] font-semibold mb-1 text-[9px]">Email</span>
+                <a href="mailto:noxelitecosmetics@gmail.com" className="text-[#F5F0E6] font-semibold hover:text-[#D4A72C] transition-colors font-mono">
+                  noxelitecosmetics@gmail.com
+                </a>
               </div>
               
-              <div className="flex flex-col items-center border-t sm:border-t-0 sm:border-x border-[#CFC5B4] pt-5 sm:pt-0">
+              <div className="flex flex-col items-center border-t sm:border-t-0 sm:border-x border-[rgba(212,167,44,0.22)] pt-5 sm:pt-0">
                 <Phone className="w-5 h-5 text-[#D4A72C] mb-2.5" />
-                <span className="uppercase tracking-[0.2em] text-[#34302A] font-semibold mb-1 text-[9px]">WhatsApp</span>
-                <span className="text-[#151515] font-semibold italic">[+91 98765 43210]</span>
+                <span className="uppercase tracking-[0.2em] text-[#D4A72C] font-semibold mb-1 text-[9px]">WhatsApp / Phone</span>
+                <a href="https://wa.me/918309053090" target="_blank" rel="noopener noreferrer" className="text-[#F5F0E6] font-semibold hover:text-[#D4A72C] transition-colors font-mono">
+                  +91 8309053090
+                </a>
               </div>
 
               <div className="flex flex-col items-center border-t sm:border-t-0 pt-5 sm:pt-0">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 text-[#D4A72C] mb-2.5"><rect width="20" height="20" x="2" y="2" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/></svg>
-                <span className="uppercase tracking-[0.2em] text-[#34302A] font-semibold mb-1 text-[9px]">Instagram</span>
-                <span className="text-[#151515] font-semibold italic">[@nox.skincare]</span>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 text-[#D4A72C] mb-2.5"><rect width="20" height="20" x="2" y="2" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/></svg>
+                <span className="uppercase tracking-[0.2em] text-[#D4A72C] font-semibold mb-1 text-[9px]">Instagram</span>
+                <a href="https://instagram.com/noxbeauty.in" target="_blank" rel="noopener noreferrer" className="text-[#F5F0E6] font-semibold hover:text-[#D4A72C] transition-colors">
+                  @noxbeauty.in
+                </a>
               </div>
             </div>
           </div>
@@ -171,7 +177,6 @@ export default async function Page() {
 
           <div>
             <h4 className="font-medium text-[#F5F0E6] uppercase tracking-[0.2em] text-[9px] mb-4">Client Care</h4>
-            <p className="italic text-[9px] text-[#CFC5B4]/60 mb-2.5">[Placeholder: Document listing template]</p>
             <ul className="space-y-2.5">
               <li><a href="#" className="hover:text-[#D4A72C] hover:underline transition-all">Privacy Policy</a></li>
               <li><a href="#" className="hover:text-[#D4A72C] hover:underline transition-all">Terms & Conditions</a></li>
@@ -182,11 +187,10 @@ export default async function Page() {
 
           <div>
             <h4 className="font-medium text-[#F5F0E6] uppercase tracking-[0.2em] text-[9px] mb-4">Headquarters</h4>
-            <p className="italic text-[9px] text-[#CFC5B4]/60 mb-2.5">[Placeholder: Official address]</p>
             <p className="leading-relaxed text-[#CFC5B4]">
               NOX Skincare Private Limited<br />
-              [Address Line 1]<br />
-              [City, State, Pincode]<br />
+              DSIDC Bawana Industrial Area,<br />
+              SEC-2, New Delhi - 110039<br />
               India
             </p>
           </div>

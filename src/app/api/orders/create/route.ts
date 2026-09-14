@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { razorpayHelper } from "@/lib/razorpay";
+import { verifyCustomerSession } from "@/lib/customer-auth";
 
 // Regular expressions for validation
 const INDIAN_PHONE_REGEX = /^(?:\+91|91|0)?[6-9]\d{9}$/;
@@ -8,8 +9,17 @@ const PINCODE_REGEX = /^\d{6}$/;
 
 export async function POST(request: Request) {
   try {
+    // 0. Enforce Customer Authentication (Strict session requirement, NO guest checkout)
+    const session = await verifyCustomerSession();
+    if (!session) {
+      return NextResponse.json(
+        { error: "Unauthorized. Please sign in or register before completing your purchase." },
+        { status: 401 }
+      );
+    }
+
     const body = await request.json();
-    const { customerName, phone, address, pincode, quantity, size } = body;
+    const { customerName, phone, address, pincode, quantity, size, items } = body;
 
     // 1. Input Validation
     if (!customerName || typeof customerName !== "string" || customerName.trim() === "") {
@@ -28,17 +38,56 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "A valid 6-digit PIN code is required" }, { status: 400 });
     }
 
-    const qty = parseInt(quantity, 10);
-    if (isNaN(qty) || qty <= 0) {
-      return NextResponse.json({ error: "Quantity must be a positive integer" }, { status: 400 });
+    // 2. Server-side Secure Price Calculation (in Paise)
+    let totalQty = 0;
+    let subtotal = 0;
+    const validatedItems: Array<{
+      name: string;
+      size: "15g" | "50g";
+      quantity: number;
+      unitPrice: number;
+      subtotal: number;
+    }> = [];
+
+    if (Array.isArray(items) && items.length > 0) {
+      for (const item of items) {
+        const itemSize = (item.size === "15g" || item.size === "Small") ? "15g" : (item.size === "50g" || item.size === "Large") ? "50g" : null;
+        const itemQty = parseInt(item.quantity, 10);
+        if (!itemSize || isNaN(itemQty) || itemQty <= 0) {
+          return NextResponse.json({ error: "Invalid item size or quantity" }, { status: 400 });
+        }
+        const unitPrice = itemSize === "15g" ? 699 : 1299;
+        const lineSubtotal = unitPrice * itemQty;
+        totalQty += itemQty;
+        subtotal += lineSubtotal;
+        validatedItems.push({
+          name: "NOX Night Cream",
+          size: itemSize,
+          quantity: itemQty,
+          unitPrice,
+          subtotal: lineSubtotal,
+        });
+      }
+    } else {
+      // Backward-compatible fallback for single-item order creation
+      const qty = parseInt(quantity, 10);
+      if (isNaN(qty) || qty <= 0) {
+        return NextResponse.json({ error: "Quantity must be a positive integer" }, { status: 400 });
+      }
+      const selectedSize: "15g" | "50g" = (size === "Small" || size === "Small (50ml)" || size === "15g") ? "15g" : "50g";
+      const productPriceInr = selectedSize === "15g" ? 699 : 1299;
+      subtotal = productPriceInr * qty;
+      totalQty = qty;
+      validatedItems.push({
+        name: "NOX Night Cream",
+        size: selectedSize,
+        quantity: qty,
+        unitPrice: productPriceInr,
+        subtotal,
+      });
     }
 
-    // 2. Server-side Secure Price Calculation (in Paise)
-    const selectedSize = (size === "Small" || size === "Small (50ml)") ? "Small" : "Large";
-    const productPriceInr = selectedSize === "Small" ? 699 : 1299;
-
     const shippingChargeInr = parseInt(process.env.NOX_SHIPPING_CHARGE_INR || "0", 10);
-    const subtotal = productPriceInr * qty;
     const totalAmountInr = subtotal + shippingChargeInr;
     const totalAmountPaise = totalAmountInr * 100;
 
@@ -61,16 +110,18 @@ export async function POST(request: Request) {
       await db.order.create({
         data: {
           orderId,
+          customerId: session.customerId,
           customerName: customerName.trim(),
           phone: phone.trim(),
           address: address.trim(),
           pincode: pincode.trim(),
-          quantity: qty,
+          quantity: totalQty,
           amount: totalAmountPaise,
           razorpayOrderId: razorpayOrder.id,
           paymentStatus: "PENDING",
           orderStatus: "NEW",
           notificationStatus: "PENDING",
+          items: JSON.stringify(validatedItems),
         },
       });
     } catch (error: unknown) {
@@ -89,9 +140,10 @@ export async function POST(request: Request) {
       phone: phone.trim(),
       address: address.trim(),
       pincode: pincode.trim(),
-      quantity: qty,
+      quantity: totalQty,
       subtotal: subtotal * 100,
       shipping: shippingChargeInr * 100,
+      items: validatedItems,
     });
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : "Unknown error";

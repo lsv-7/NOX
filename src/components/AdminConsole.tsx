@@ -7,6 +7,7 @@ import {
   ArrowLeft, RefreshCw, CheckCircle, Clock, XCircle, 
   ShieldCheck, CheckSquare, Layers, ExternalLink 
 } from "lucide-react";
+import { parseOrderItems } from "@/lib/order-utils";
 
 interface Order {
   id: string;
@@ -23,6 +24,7 @@ interface Order {
   orderStatus: "NEW" | "PACKED" | "SHIPPED" | "DELIVERED" | "CANCELLED";
   notificationStatus: "PENDING" | "SENT" | "FAILED";
   deliveryStatus: "NOT_SENT" | "SENT";
+  items?: string | null;
   createdAt: string;
 }
 
@@ -196,8 +198,7 @@ export default function AdminConsole() {
                 </thead>
                 <tbody className="divide-y divide-[#E5E5E5]">
                   {orders.map((order) => {
-                    const unitPrice = order.amount / order.quantity;
-                    const sizeLabel = unitPrice === 69900 ? "Small (15g)" : "Large (50g)";
+                    const parsedItems = parseOrderItems(order.items);
                     
                     return (
                       <tr key={order.id} className="hover:bg-[#F7F7F5]/50 transition-colors">
@@ -220,9 +221,23 @@ export default function AdminConsole() {
 
                         {/* Product Details */}
                         <td className="py-4 px-4 space-y-0.5">
-                          <p className="font-medium text-[#171717]">NOX Cream ({sizeLabel})</p>
-                          <p className="text-[#666666]">Qty: {order.quantity}</p>
-                          <p className="font-semibold text-[#171717] text-sm">₹{order.amount / 100}</p>
+                          {parsedItems && parsedItems.length > 0 ? (
+                            <div className="space-y-1">
+                              {parsedItems.map((item, idx) => (
+                                <p key={idx} className="text-[#171717] font-medium text-xs">
+                                  {item.size} × {item.quantity} — ₹{item.subtotal}
+                                </p>
+                              ))}
+                              <p className="text-[#666666] text-[10px] pt-0.5 border-t border-[#E5E5E5] font-semibold">
+                                Total: {order.quantity} Jar{order.quantity > 1 ? "s" : ""} — ₹{order.amount / 100}
+                              </p>
+                            </div>
+                          ) : (
+                            <>
+                              <p className="font-semibold text-[#171717]">{order.quantity} Jar{order.quantity > 1 ? "s" : ""}</p>
+                              <p className="text-[#666666]">₹{order.amount / 100}</p>
+                            </>
+                          )}
                         </td>
 
                         {/* Statuses */}

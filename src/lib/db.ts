@@ -7,9 +7,29 @@ import path from "path";
 const isMockMode = process.env.NOX_MOCK_MODE === "true";
 const MOCK_DB_PATH = path.join(process.cwd(), "nox_mock_database.json");
 
+export interface Customer {
+  id: string;
+  name: string;
+  phone: string;
+  email: string;
+  passwordHash: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface PasswordResetToken {
+  id: string;
+  customerId: string;
+  tokenHash: string;
+  expiresAt: Date;
+  usedAt: Date | null;
+  createdAt: Date;
+}
+
 export interface Order {
   id: string;
   orderId: string;
+  customerId?: string | null;
   customerName: string;
   phone: string;
   address: string;
@@ -22,6 +42,7 @@ export interface Order {
   orderStatus: "NEW" | "PACKED" | "SHIPPED" | "DELIVERED" | "CANCELLED";
   notificationStatus: "PENDING" | "SENT" | "FAILED";
   deliveryStatus: "NOT_SENT" | "SENT";
+  items?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -29,13 +50,15 @@ export interface Order {
 interface MockDatabase {
   orders: Order[];
   counter: number;
+  customers?: Customer[];
+  resetTokens?: PasswordResetToken[];
 }
 
 // Helper to read mock db file
 function readMockDb(): MockDatabase {
   try {
     if (!fs.existsSync(MOCK_DB_PATH)) {
-      fs.writeFileSync(MOCK_DB_PATH, JSON.stringify({ orders: [], counter: 0 }, null, 2));
+      fs.writeFileSync(MOCK_DB_PATH, JSON.stringify({ orders: [], counter: 0, customers: [], resetTokens: [] }, null, 2));
     }
     const content = fs.readFileSync(MOCK_DB_PATH, "utf-8");
     const data = JSON.parse(content);
@@ -50,10 +73,21 @@ function readMockDb(): MockDatabase {
         } as unknown as Order;
       }),
       counter: data.counter || 0,
+      customers: (data.customers || []).map((c: Customer) => ({
+        ...c,
+        createdAt: new Date(c.createdAt),
+        updatedAt: new Date(c.updatedAt),
+      })),
+      resetTokens: (data.resetTokens || []).map((t: PasswordResetToken) => ({
+        ...t,
+        expiresAt: new Date(t.expiresAt),
+        usedAt: t.usedAt ? new Date(t.usedAt) : null,
+        createdAt: new Date(t.createdAt),
+      })),
     };
   } catch (error) {
     console.error("Failed to read mock database file:", error);
-    return { orders: [], counter: 0 };
+    return { orders: [], counter: 0, customers: [], resetTokens: [] };
   }
 }
 
@@ -83,6 +117,7 @@ export const db = {
     async create(args: {
       data: {
         orderId: string;
+        customerId?: string | null;
         customerName: string;
         phone: string;
         address: string;
@@ -94,6 +129,7 @@ export const db = {
         orderStatus?: "NEW" | "PACKED" | "SHIPPED" | "DELIVERED" | "CANCELLED";
         notificationStatus?: "PENDING" | "SENT" | "FAILED";
         deliveryStatus?: "NOT_SENT" | "SENT";
+        items?: string | null;
       };
     }): Promise<Order> {
       if (isMockMode) {
@@ -101,6 +137,7 @@ export const db = {
         const newOrder: Order = {
           id: Math.random().toString(36).substring(2, 11),
           orderId: args.data.orderId,
+          customerId: args.data.customerId || null,
           customerName: args.data.customerName,
           phone: args.data.phone,
           address: args.data.address,
@@ -113,6 +150,7 @@ export const db = {
           orderStatus: args.data.orderStatus || "NEW",
           notificationStatus: args.data.notificationStatus || "PENDING",
           deliveryStatus: args.data.deliveryStatus || "NOT_SENT",
+          items: args.data.items || null,
           createdAt: new Date(),
           updatedAt: new Date(),
         };
@@ -123,6 +161,7 @@ export const db = {
         const res = await prismaClient!.order.create({
           data: {
             orderId: args.data.orderId,
+            customerId: args.data.customerId || null,
             customerName: args.data.customerName,
             phone: args.data.phone,
             address: args.data.address,
@@ -134,6 +173,7 @@ export const db = {
             orderStatus: args.data.orderStatus,
             notificationStatus: args.data.notificationStatus,
             deliveryStatus: args.data.deliveryStatus || "NOT_SENT",
+            items: args.data.items || null,
           },
         });
         return res as unknown as Order;
@@ -161,15 +201,21 @@ export const db = {
     },
 
     async findMany(args?: {
+      where?: { customerId?: string | null; [key: string]: unknown };
       take?: number;
       skip?: number;
       orderBy?: { createdAt: "asc" | "desc" };
     }): Promise<Order[]> {
       if (isMockMode) {
         const mockDb = readMockDb();
-        const orders = [...mockDb.orders].sort((a: Order, b: Order) => {
+        let orders = [...mockDb.orders];
+        if (args?.where?.customerId !== undefined) {
+          orders = orders.filter((o) => o.customerId === args.where?.customerId);
+        }
+        orders.sort((a: Order, b: Order) => {
           return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
         });
+        if (args?.take) orders = orders.slice(0, args.take);
         return orders;
       } else {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -181,6 +227,7 @@ export const db = {
     async update(args: {
       where: { id?: string; orderId?: string; razorpayOrderId?: string };
       data: {
+        customerId?: string | null;
         paymentStatus?: "PENDING" | "PAID" | "FAILED";
         paymentId?: string | null;
         orderStatus?: "NEW" | "PACKED" | "SHIPPED" | "DELIVERED" | "CANCELLED";
@@ -215,6 +262,214 @@ export const db = {
           data: args.data as any,
         });
         return updated as unknown as Order;
+      }
+    },
+  },
+
+  customer: {
+    async findUnique(args: { where: { id?: string; email?: string; phone?: string } }): Promise<Customer | null> {
+      if (isMockMode) {
+        const mockDb = readMockDb();
+        const customer = (mockDb.customers || []).find((c) => {
+          if (args.where.id && c.id === args.where.id) return true;
+          if (args.where.email && c.email.toLowerCase() === args.where.email.toLowerCase()) return true;
+          if (args.where.phone && c.phone === args.where.phone) return true;
+          return false;
+        });
+        return customer || null;
+      } else {
+        const customer = await prismaClient!.customer.findUnique({
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          where: args.where as any,
+        });
+        return customer as unknown as Customer | null;
+      }
+    },
+
+    async findFirst(args: {
+      where: {
+        OR?: Array<{ email?: string; phone?: string }>;
+        email?: string;
+        phone?: string;
+        id?: string;
+      };
+    }): Promise<Customer | null> {
+      if (isMockMode) {
+        const mockDb = readMockDb();
+        const customer = (mockDb.customers || []).find((c) => {
+          if (args.where.OR && Array.isArray(args.where.OR)) {
+            return args.where.OR.some((cond: { email?: string; phone?: string }) => {
+              if (cond.email && c.email.toLowerCase() === cond.email.toLowerCase()) return true;
+              if (cond.phone && c.phone === cond.phone) return true;
+              return false;
+            });
+          }
+          if (args.where.email && c.email.toLowerCase() === args.where.email.toLowerCase()) return true;
+          if (args.where.phone && c.phone === args.where.phone) return true;
+          if (args.where.id && c.id === args.where.id) return true;
+          return false;
+        });
+        return customer || null;
+      } else {
+        const customer = await prismaClient!.customer.findFirst({
+          where: args.where,
+        });
+        return customer as unknown as Customer | null;
+      }
+    },
+
+    async create(args: {
+      data: {
+        name: string;
+        phone: string;
+        email: string;
+        passwordHash: string;
+      };
+    }): Promise<Customer> {
+      if (isMockMode) {
+        const mockDb = readMockDb();
+        if (!mockDb.customers) mockDb.customers = [];
+        const newCustomer: Customer = {
+          id: Math.random().toString(36).substring(2, 11),
+          name: args.data.name,
+          phone: args.data.phone,
+          email: args.data.email,
+          passwordHash: args.data.passwordHash,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        mockDb.customers.push(newCustomer);
+        writeMockDb(mockDb);
+        return newCustomer;
+      } else {
+        const customer = await prismaClient!.customer.create({
+          data: args.data,
+        });
+        return customer as unknown as Customer;
+      }
+    },
+
+    async update(args: {
+      where: { id?: string; email?: string };
+      data: {
+        passwordHash?: string;
+        name?: string;
+        phone?: string;
+      };
+    }): Promise<Customer> {
+      if (isMockMode) {
+        const mockDb = readMockDb();
+        if (!mockDb.customers) mockDb.customers = [];
+        const idx = mockDb.customers.findIndex((c) => {
+          if (args.where.id && c.id === args.where.id) return true;
+          if (args.where.email && c.email.toLowerCase() === args.where.email.toLowerCase()) return true;
+          return false;
+        });
+        if (idx === -1) throw new Error("Customer not found for update");
+        const updated: Customer = {
+          ...mockDb.customers[idx],
+          ...args.data,
+          updatedAt: new Date(),
+        };
+        mockDb.customers[idx] = updated;
+        writeMockDb(mockDb);
+        return updated;
+      } else {
+        const customer = await prismaClient!.customer.update({
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          where: args.where as any,
+          data: args.data,
+        });
+        return customer as unknown as Customer;
+      }
+    },
+  },
+
+  passwordResetToken: {
+    async create(args: {
+      data: {
+        customerId: string;
+        tokenHash: string;
+        expiresAt: Date;
+      };
+    }): Promise<PasswordResetToken> {
+      if (isMockMode) {
+        const mockDb = readMockDb();
+        if (!mockDb.resetTokens) mockDb.resetTokens = [];
+        const token: PasswordResetToken = {
+          id: Math.random().toString(36).substring(2, 11),
+          customerId: args.data.customerId,
+          tokenHash: args.data.tokenHash,
+          expiresAt: args.data.expiresAt,
+          usedAt: null,
+          createdAt: new Date(),
+        };
+        mockDb.resetTokens.push(token);
+        writeMockDb(mockDb);
+        return token;
+      } else {
+        const token = await prismaClient!.passwordResetToken.create({
+          data: args.data,
+        });
+        return token as unknown as PasswordResetToken;
+      }
+    },
+
+    async findUnique(args: { where: { tokenHash: string } }): Promise<PasswordResetToken | null> {
+      if (isMockMode) {
+        const mockDb = readMockDb();
+        const token = (mockDb.resetTokens || []).find((t) => t.tokenHash === args.where.tokenHash);
+        return token || null;
+      } else {
+        const token = await prismaClient!.passwordResetToken.findUnique({
+          where: args.where,
+        });
+        return token as unknown as PasswordResetToken | null;
+      }
+    },
+
+    async update(args: {
+      where: { id?: string; tokenHash?: string };
+      data: { usedAt: Date };
+    }): Promise<PasswordResetToken> {
+      if (isMockMode) {
+        const mockDb = readMockDb();
+        if (!mockDb.resetTokens) mockDb.resetTokens = [];
+        const idx = mockDb.resetTokens.findIndex((t) => {
+          if (args.where.id && t.id === args.where.id) return true;
+          if (args.where.tokenHash && t.tokenHash === args.where.tokenHash) return true;
+          return false;
+        });
+        if (idx === -1) throw new Error("Reset token not found for update");
+        const updated: PasswordResetToken = {
+          ...mockDb.resetTokens[idx],
+          usedAt: args.data.usedAt,
+        };
+        mockDb.resetTokens[idx] = updated;
+        writeMockDb(mockDb);
+        return updated;
+      } else {
+        const token = await prismaClient!.passwordResetToken.update({
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          where: args.where as any,
+          data: args.data,
+        });
+        return token as unknown as PasswordResetToken;
+      }
+    },
+
+    async deleteMany(args: { where: { customerId?: string } }): Promise<{ count: number }> {
+      if (isMockMode) {
+        const mockDb = readMockDb();
+        if (!mockDb.resetTokens) mockDb.resetTokens = [];
+        const before = mockDb.resetTokens.length;
+        mockDb.resetTokens = mockDb.resetTokens.filter((t) => t.customerId !== args.where.customerId);
+        writeMockDb(mockDb);
+        return { count: before - mockDb.resetTokens.length };
+      } else {
+        return await prismaClient!.passwordResetToken.deleteMany({
+          where: args.where,
+        });
       }
     },
   },

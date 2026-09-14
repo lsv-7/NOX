@@ -43,3 +43,4 @@ next-env.d.ts
 # local logs and database files
 nox_sent_notifications.log
 nox_mock_database.json
+scratch/

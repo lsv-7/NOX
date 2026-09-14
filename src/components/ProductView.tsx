@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import Script from "next/script";
 import { useRouter } from "next/navigation";
-import { Plus, Minus, ShieldCheck, Truck, AlertCircle, Loader2 } from "lucide-react";
+import { Plus, Minus, ShieldCheck, Truck, AlertCircle, Loader2, Check, ShoppingBag, User, LogOut, ArrowRight, CheckCircle2 } from "lucide-react";
 import { OrderTimeline } from "./OrderTimeline";
 
 interface ProductViewProps {
@@ -36,16 +36,28 @@ export default function ProductView({
     return "Large";
   });
 
-  // Core checkout states - initialized lazily from sessionStorage
-  const [quantity, setQuantity] = useState<number>(() => {
+  // Active quantity stepper for the currently viewed variant in hero
+  const [activeQuantity, setActiveQuantity] = useState<number>(1);
+
+  // Multi-variant Cart State
+  const [cart, setCart] = useState<{ "15g": number; "50g": number }>(() => {
     if (typeof window !== "undefined") {
       try {
         const saved = sessionStorage.getItem("nox_checkout_pending");
-        if (saved) return JSON.parse(saved).quantity || 1;
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.cart && (parsed.cart["15g"] > 0 || parsed.cart["50g"] > 0)) {
+            return parsed.cart;
+          }
+          if (parsed.size === "Small") return { "15g": parsed.quantity || 1, "50g": 0 };
+          if (parsed.size === "Large") return { "15g": 0, "50g": parsed.quantity || 1 };
+        }
       } catch {}
     }
-    return 1;
+    return { "15g": 0, "50g": 1 };
   });
+
+  const [addedNotification, setAddedNotification] = useState<string | null>(null);
 
   const [customerName, setCustomerName] = useState(() => {
     if (typeof window !== "undefined") {
@@ -97,62 +109,244 @@ export default function ProductView({
   const [pendingRazorpayOrderId, setPendingRazorpayOrderId] = useState<string | null>(null);
   const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
 
-  // Tracking Panel States
-  interface TrackedOrderItem {
+  // Customer Profile & Authentication State
+  interface CustomerProfile {
+    id: string;
+    name: string;
+    email: string;
+    phone: string;
+  }
+
+  interface CustomerOrderItem {
+    name: string;
+    size: "15g" | "50g";
+    quantity: number;
+    unitPrice: number;
+    subtotal: number;
+  }
+
+  interface CustomerOrder {
+    id: string;
     orderId: string;
+    customerName: string;
+    phone: string;
+    quantity: number;
     amount: number;
     paymentStatus: string;
     deliveryStatus: string;
+    orderStatus: string;
+    items?: CustomerOrderItem[];
     createdAt: string;
   }
 
-  const [trackedOrders, setTrackedOrders] = useState<TrackedOrderItem[]>([]);
-  const [trackingLoading, setTrackingLoading] = useState(false);
-  const [trackingError, setTrackingError] = useState<string | null>(null);
-  
-  // Manual Import Form States
-  const [importOrderId, setImportOrderId] = useState("");
-  const [importPhone, setImportPhone] = useState("");
-  const [importLoading, setImportLoading] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-  const [importSuccess, setImportSuccess] = useState(false);
+  const [customer, setCustomer] = useState<CustomerProfile | null>(null);
+  const [customerOrders, setCustomerOrders] = useState<CustomerOrder[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersError, setOrdersError] = useState<string | null>(null);
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
-  const fetchTrackedOrders = async () => {
+  // Auth Form State (for both Tracking section and Checkout login)
+  const [authMode, setAuthMode] = useState<"login" | "register" | "forgot">("login");
+  const [authLoginId, setAuthLoginId] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [regName, setRegName] = useState("");
+  const [regPhone, setRegPhone] = useState("");
+  const [regEmail, setRegEmail] = useState("");
+  const [regPassword, setRegPassword] = useState("");
+  const [forgotInput, setForgotInput] = useState("");
+
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authSuccess, setAuthSuccess] = useState<string | null>(null);
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+
+  const loadCustomerOrders = async () => {
     try {
-      const saved = localStorage.getItem("nox_my_orders");
-      if (!saved) return;
-      const list = JSON.parse(saved);
-      if (!Array.isArray(list) || list.length === 0) return;
-      
-      setTrackingLoading(true);
-      setTrackingError(null);
-      
-      const res = await fetch("/api/orders/track", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orders: list }),
-      });
-      
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setTrackedOrders(data.orders || []);
+      setOrdersLoading(true);
+      setOrdersError(null);
+      const res = await fetch("/api/orders");
+      if (res.ok) {
+        const data = await res.json();
+        const list = data.orders || [];
+        setCustomerOrders(list);
+        if (list.length > 0) {
+          setSelectedOrderId((prev: string | null) => prev || list[0].orderId);
+        }
+      } else if (res.status === 401) {
+        setCustomerOrders([]);
       } else {
-        setTrackingError(data.error || "Failed to load order tracking details");
+        const data = await res.json();
+        setOrdersError(data.error || "Failed to load orders");
       }
     } catch (err) {
-      console.error("Tracking fetch error:", err);
-      setTrackingError("Failed to connect to tracking service");
+      console.error("Orders fetch error:", err);
+      setOrdersError("Failed to connect to order service");
     } finally {
-      setTrackingLoading(false);
+      setOrdersLoading(false);
     }
   };
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchTrackedOrders();
-    }, 0);
-    return () => clearTimeout(timer);
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await fetch("/api/auth/me");
+        if (!mounted) return;
+        if (res.ok) {
+          const data = await res.json();
+          if (data.authenticated && data.customer) {
+            setCustomer(data.customer);
+            setCustomerName((prev: string) => prev || data.customer.name);
+            setPhone((prev: string) => prev || data.customer.phone);
+            const ordersRes = await fetch("/api/orders");
+            if (ordersRes.ok && mounted) {
+              const ordersData = await ordersRes.json();
+              const list = ordersData.orders || [];
+              setCustomerOrders(list);
+              if (list.length > 0) {
+                setSelectedOrderId(list[0].orderId);
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Mount auth check error:", e);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
   }, []);
+
+  const handleCustomerLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthSuccess(null);
+    if (!authLoginId.trim() || !authPassword) {
+      setAuthError("Please enter your email or phone number and password");
+      return;
+    }
+
+    setAuthSubmitting(true);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          identifier: authLoginId.trim(),
+          password: authPassword,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setCustomer(data.customer);
+        setCustomerName(data.customer.name);
+        setPhone(data.customer.phone);
+        setAuthPassword("");
+        setAuthSuccess("Successfully signed in!");
+        await loadCustomerOrders();
+      } else {
+        setAuthError(data.error || "Invalid credentials");
+      }
+    } catch (err) {
+      console.error("Login error:", err);
+      setAuthError("Failed to connect to authentication server");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleCustomerRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthSuccess(null);
+
+    if (!regName.trim() || !regPhone.trim() || !regEmail.trim() || !regPassword) {
+      setAuthError("Please complete all registration fields");
+      return;
+    }
+    if (regPassword.length < 8) {
+      setAuthError("Password must be at least 8 characters long");
+      return;
+    }
+
+    setAuthSubmitting(true);
+    try {
+      const res = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: regName.trim(),
+          phone: regPhone.trim(),
+          email: regEmail.trim(),
+          password: regPassword,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setCustomer(data.customer);
+        setCustomerName(data.customer.name);
+        setPhone(data.customer.phone);
+        setRegPassword("");
+        setAuthSuccess("Account registered successfully!");
+        await loadCustomerOrders();
+      } else {
+        setAuthError(data.error || "Registration failed. Mobile or email may already exist.");
+      }
+    } catch (err) {
+      console.error("Register error:", err);
+      setAuthError("Failed to connect to registration server");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleCustomerForgot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthSuccess(null);
+
+    if (!forgotInput.trim()) {
+      setAuthError("Please enter your registered email or phone number");
+      return;
+    }
+
+    setAuthSubmitting(true);
+    try {
+      const res = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          identifier: forgotInput.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setAuthSuccess(
+          "If an account exists with these details, password reset instructions have been generated."
+        );
+      } else {
+        setAuthError(data.error || "Failed to process request");
+      }
+    } catch (err) {
+      console.error("Forgot password error:", err);
+      setAuthError("Failed to connect to server");
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleCustomerLogout = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch (e) {
+      console.error("Logout error:", e);
+    }
+    setCustomer(null);
+    setCustomerOrders([]);
+    setSelectedOrderId(null);
+    setAuthSuccess(null);
+    setAuthError(null);
+  };
 
   // Clear session storage and scroll if restored on mount
   useEffect(() => {
@@ -171,10 +365,48 @@ export default function ProductView({
     }
   }, []);
 
-  // Variant price settings
-  const productPrice = selectedSize === "Small" ? 699 : 1299;
-  const subtotal = productPrice * quantity;
+  // Subtotal and Total calculations
+  const subtotal15g = cart["15g"] * 699;
+  const subtotal50g = cart["50g"] * 1299;
+  const subtotal = subtotal15g + subtotal50g;
+  const totalJars = cart["15g"] + cart["50g"];
   const total = subtotal + shippingChargeInr;
+
+  // Cart manipulation handlers
+  const handleAddToCart = () => {
+    const key = selectedSize === "Small" ? "15g" : "50g";
+    setCart((prev) => ({
+      ...prev,
+      [key]: activeQuantity,
+    }));
+    setAddedNotification(`Added ${key} (${activeQuantity} Jar${activeQuantity > 1 ? "s" : ""}) to Cart ✓`);
+    setTimeout(() => setAddedNotification(null), 3000);
+  };
+
+  const handleBuyNow = () => {
+    const key = selectedSize === "Small" ? "15g" : "50g";
+    if (cart[key] === 0) {
+      setCart((prev) => ({
+        ...prev,
+        [key]: activeQuantity,
+      }));
+    }
+    checkoutRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const updateCartQuantity = (size: "15g" | "50g", delta: number) => {
+    setCart((prev) => {
+      const otherSize = size === "15g" ? "50g" : "15g";
+      const newQty = prev[size] + delta;
+      if (newQty <= 0 && prev[otherSize] <= 0) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [size]: Math.max(0, newQty),
+      };
+    });
+  };
 
   // Validation functions
   const validateForm = () => {
@@ -214,14 +446,28 @@ export default function ProductView({
   const handleProceedToPayment = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (!customer) {
+      alert("Please sign in or create an account to proceed with checkout.");
+      return;
+    }
+
     if (!validateForm()) {
+      return;
+    }
+
+    const orderItems: Array<{ size: "15g" | "50g"; quantity: number }> = [];
+    if (cart["15g"] > 0) orderItems.push({ size: "15g", quantity: cart["15g"] });
+    if (cart["50g"] > 0) orderItems.push({ size: "50g", quantity: cart["50g"] });
+
+    if (orderItems.length === 0) {
+      alert("Please add at least one product variant to your cart.");
       return;
     }
 
     setIsSubmitting(true);
 
     try {
-      // 1. Call server API to create Order with selected size
+      // 1. Call server API to create Order with cart items
       const res = await fetch("/api/orders/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -230,8 +476,8 @@ export default function ProductView({
           phone,
           address,
           pincode,
-          quantity,
-          size: selectedSize,
+          items: orderItems,
+          quantity: totalJars,
         }),
       });
 
@@ -242,7 +488,7 @@ export default function ProductView({
       }
 
       // Save user details to sessionStorage for payment failure retry state preservation
-      const checkoutState = { customerName, phone, address, pincode, quantity, size: selectedSize };
+      const checkoutState = { customerName, phone, address, pincode, cart };
       sessionStorage.setItem("nox_checkout_pending", JSON.stringify(checkoutState));
 
       if (isMockMode) {
@@ -253,12 +499,13 @@ export default function ProductView({
         setIsSubmitting(false);
       } else {
         // Live Razorpay payment overlay
+        const itemDesc = orderItems.map((i) => `${i.size} × ${i.quantity}`).join(", ");
         const options = {
           key: data.keyId,
           amount: data.amount,
           currency: "INR",
           name: "NOX",
-          description: `NOX Skincare Cream (${selectedSize}) x ${quantity}`,
+          description: `NOX Night Cream (${itemDesc})`,
           order_id: data.razorpayOrderId,
           handler: async function (response: {
             razorpay_order_id: string;
@@ -379,57 +626,6 @@ export default function ProductView({
     router.push("/payment-failure");
   };
 
-  // Manual Import Form Handler
-  const handleImportOrder = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!importOrderId.trim() || !importPhone.trim()) {
-      setImportError("Both Order ID and Phone Number are required");
-      return;
-    }
-
-    setImportLoading(true);
-    setImportError(null);
-    setImportSuccess(false);
-
-    try {
-      const res = await fetch("/api/orders/track", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          orderId: importOrderId.trim(),
-          phone: importPhone.trim()
-        }),
-      });
-
-      const data = await res.json();
-      if (res.ok && data.success) {
-        setImportSuccess(true);
-        setImportOrderId("");
-        setImportPhone("");
-        
-        try {
-          const saved = localStorage.getItem("nox_my_orders");
-          const list: LocalSavedOrder[] = saved ? JSON.parse(saved) : [];
-          if (!list.some((o) => o.orderId === data.order.orderId)) {
-            list.push({ orderId: data.order.orderId, phone: data.order.phone || importPhone.trim() });
-            localStorage.setItem("nox_my_orders", JSON.stringify(list));
-          }
-        } catch (e) {
-          console.error("Local storage error:", e);
-        }
-        
-        fetchTrackedOrders();
-      } else {
-        setImportError(data.error || "Order not found or details don't match.");
-      }
-    } catch (err) {
-      console.error("Import error:", err);
-      setImportError("Failed to connect to verification servers.");
-    } finally {
-      setImportLoading(false);
-    }
-  };
-
   return (
     <>
       <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="lazyOnload" />
@@ -476,7 +672,7 @@ export default function ProductView({
                 NOX
               </h1>
               <p className="font-serif text-lg text-[#D4A72C] font-light tracking-wider mt-1.5 uppercase">
-                THE NIGHT RITUAL
+                NIGHT CREAM
               </p>
               
               <p className="mt-6 text-[#CFC5B4] font-light leading-relaxed text-sm">
@@ -495,59 +691,69 @@ export default function ProductView({
                 <button
                   type="button"
                   onClick={() => setSelectedSize("Small")}
-                  className={`flex flex-col items-center justify-center p-4 rounded-xl border text-center transition-all ${
+                  className={`flex flex-col items-center justify-center p-5 rounded-xl border text-center transition-all ${
                     selectedSize === "Small"
                       ? "bg-[#0D0E11] border-[#D4A72C] text-[#F5F0E6] shadow-md shadow-[#D4A72C]/5"
                       : "bg-[#08090B] border-[rgba(212,167,44,0.22)] text-[#CFC5B4] hover:border-[#9D8751]"
                   }`}
                 >
-                  <span className="text-xs uppercase tracking-widest font-semibold font-sans">SMALL — 15g</span>
-                  <span className={`text-sm font-serif mt-1 ${selectedSize === "Small" ? "text-[#D4A72C]" : "text-[#CFC5B4]"}`}>₹699</span>
-                  {selectedSize === "Small" ? (
-                    <span className="text-[9px] uppercase tracking-wider text-[#D4A72C] mt-1.5 font-bold font-sans">SELECTED</span>
-                  ) : (
-                    <span className="text-[9px] uppercase tracking-wider text-transparent mt-1.5 font-bold font-sans">UNSELECTED</span>
-                  )}
+                  <span className="text-xs uppercase tracking-wider font-semibold font-sans">SMALL (15G) — ₹699</span>
+                  <div className="flex items-center gap-1.5 mt-2">
+                    <span className={`text-[9px] uppercase tracking-wider font-bold font-sans ${selectedSize === "Small" ? "text-[#D4A72C]" : "text-transparent"}`}>
+                      SELECTED
+                    </span>
+                    {cart["15g"] > 0 && (
+                      <span className="text-[9px] uppercase tracking-wider text-[#F5F0E6] bg-[#D4A72C]/20 border border-[#D4A72C]/40 px-1.5 py-0.5 rounded font-mono">
+                        {cart["15g"]} in cart
+                      </span>
+                    )}
+                  </div>
                 </button>
 
                 {/* Large Variant */}
                 <button
                   type="button"
                   onClick={() => setSelectedSize("Large")}
-                  className={`flex flex-col items-center justify-center p-4 rounded-xl border text-center transition-all ${
+                  className={`flex flex-col items-center justify-center p-5 rounded-xl border text-center transition-all ${
                     selectedSize === "Large"
                       ? "bg-[#0D0E11] border-[#D4A72C] text-[#F5F0E6] shadow-md shadow-[#D4A72C]/5"
                       : "bg-[#08090B] border-[rgba(212,167,44,0.22)] text-[#CFC5B4] hover:border-[#9D8751]"
                   }`}
                 >
-                  <span className="text-xs uppercase tracking-widest font-semibold font-sans">LARGE — 50g</span>
-                  <span className={`text-sm font-serif mt-1 ${selectedSize === "Large" ? "text-[#D4A72C]" : "text-[#CFC5B4]"}`}>₹1,299</span>
-                  {selectedSize === "Large" ? (
-                    <span className="text-[9px] uppercase tracking-wider text-[#D4A72C] mt-1.5 font-bold font-sans">SELECTED</span>
-                  ) : (
-                    <span className="text-[9px] uppercase tracking-wider text-transparent mt-1.5 font-bold font-sans">UNSELECTED</span>
-                  )}
+                  <span className="text-xs uppercase tracking-wider font-semibold font-sans">LARGE (50G) — ₹1,299</span>
+                  <div className="flex items-center gap-1.5 mt-2">
+                    <span className={`text-[9px] uppercase tracking-wider font-bold font-sans ${selectedSize === "Large" ? "text-[#D4A72C]" : "text-transparent"}`}>
+                      SELECTED
+                    </span>
+                    {cart["50g"] > 0 && (
+                      <span className="text-[9px] uppercase tracking-wider text-[#F5F0E6] bg-[#D4A72C]/20 border border-[#D4A72C]/40 px-1.5 py-0.5 rounded font-mono">
+                        {cart["50g"]} in cart
+                      </span>
+                    )}
+                  </div>
                 </button>
               </div>
             </div>
 
             <div className="mt-8 pt-6">
-              {/* Quantity Selector */}
+              {/* Quantity Selector for Active Variant */}
               <div className="flex items-center justify-between mb-6">
-                <span className="text-[10px] uppercase tracking-[0.2em] text-[#CFC5B4] font-semibold">Quantity</span>
+                <span className="text-[10px] uppercase tracking-[0.2em] text-[#CFC5B4] font-semibold">
+                  Quantity ({selectedSize === "Small" ? "15g" : "50g"})
+                </span>
                 <div className="flex items-center border border-[rgba(212,167,44,0.22)] rounded-full bg-[#08090B] px-2.5 py-1">
                   <button
                     type="button"
-                    onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                    onClick={() => setActiveQuantity(Math.max(1, activeQuantity - 1))}
                     className="p-1 text-[#D4A72C] hover:text-[#F5F0E6] transition-colors"
                     aria-label="Decrease quantity"
                   >
                     <Minus className="w-3.5 h-3.5" />
                   </button>
-                  <span className="px-4 text-xs font-semibold w-8 text-center text-[#F5F0E6]">{quantity}</span>
+                  <span className="px-4 text-xs font-semibold w-8 text-center text-[#F5F0E6]">{activeQuantity}</span>
                   <button
                     type="button"
-                    onClick={() => setQuantity(quantity + 1)}
+                    onClick={() => setActiveQuantity(activeQuantity + 1)}
                     className="p-1 text-[#D4A72C] hover:text-[#F5F0E6] transition-colors"
                     aria-label="Increase quantity"
                   >
@@ -558,17 +764,63 @@ export default function ProductView({
 
               {/* Order pricing details row */}
               <div className="flex justify-between items-baseline mb-4 text-[#CFC5B4] text-xs font-light">
-                <span>Total Cost ({selectedSize === "Small" ? "15g" : "50g"}):</span>
-                <span className="text-[#D4A72C] font-serif text-2xl font-semibold">₹{total}</span>
+                <span>Price ({selectedSize === "Small" ? "15g" : "50g"} × {activeQuantity}):</span>
+                <span className="text-[#D4A72C] font-serif text-2xl font-semibold">
+                  ₹{(selectedSize === "Small" ? 699 : 1299) * activeQuantity}
+                </span>
               </div>
 
-              {/* Primary Buy CTA */}
-              <button
-                onClick={scrollToCheckout}
-                className="w-full bg-[#D4A72C] hover:bg-[#B88A20] text-[#0D0E11] transition-all duration-300 font-semibold py-4 px-8 rounded-full text-center text-xs uppercase tracking-[0.25em] shadow-lg shadow-[#D4A72C]/10 border border-[#B88A20]"
-              >
-                BUY NOW
-              </button>
+              {/* Added Notification Toast */}
+              {addedNotification && (
+                <div className="mb-4 p-3 rounded-lg bg-[#D4A72C]/10 border border-[#D4A72C]/40 text-[#D4A72C] text-xs text-center font-medium animate-fade-in flex items-center justify-center gap-2">
+                  <Check className="w-4 h-4 text-[#D4A72C]" />
+                  <span>{addedNotification}</span>
+                </div>
+              )}
+
+              {/* Action Buttons: Add to Cart + Buy Now */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={handleAddToCart}
+                  className="w-full bg-[#0D0E11] hover:bg-[#15171C] text-[#D4A72C] border border-[#D4A72C] transition-all duration-300 font-semibold py-4 px-6 rounded-full text-center text-xs uppercase tracking-[0.2em] shadow-md flex items-center justify-center gap-2"
+                >
+                  <ShoppingBag className="w-4 h-4" />
+                  <span>ADD TO CART</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBuyNow}
+                  className="w-full bg-[#D4A72C] hover:bg-[#B88A20] text-[#0D0E11] transition-all duration-300 font-semibold py-4 px-6 rounded-full text-center text-xs uppercase tracking-[0.2em] shadow-lg shadow-[#D4A72C]/10 border border-[#B88A20]"
+                >
+                  BUY NOW
+                </button>
+              </div>
+
+              {/* Cart Summary Banner if items exist in cart */}
+              {totalJars > 0 && (
+                <div className="mt-4 p-3.5 rounded-xl bg-[#08090B] border border-[rgba(212,167,44,0.22)] flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2 text-[#CFC5B4]">
+                    <ShoppingBag className="w-4 h-4 text-[#D4A72C]" />
+                    <span>
+                      Cart ({totalJars} {totalJars === 1 ? "jar" : "jars"}):{" "}
+                      {[
+                        cart["15g"] > 0 ? `15g × ${cart["15g"]}` : null,
+                        cart["50g"] > 0 ? `50g × ${cart["50g"]}` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" + ")}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={scrollToCheckout}
+                    className="text-[#D4A72C] hover:text-[#F5F0E6] font-semibold uppercase tracking-wider text-[10px] underline underline-offset-4"
+                  >
+                    View Cart (₹{subtotal}) →
+                  </button>
+                </div>
+              )}
 
               <div className="mt-4 flex items-center justify-center gap-6 text-[10px] text-neutral-500 font-light tracking-wide uppercase">
                 <span className="flex items-center gap-1">
@@ -584,18 +836,18 @@ export default function ProductView({
         </div>
       </section>
 
-      {/* Tabs Section: Product Information Details (LIGHT - Warm Ivory Background) */}
-      <div className="bg-[#F5F0E6] text-[#34302A] border-b border-[#CFC5B4]">
+      {/* Tabs Section: Product Information Details (DARK - Deep Black Background) */}
+      <div className="bg-[#08090B] text-[#F5F0E6] border-b border-[rgba(212,167,44,0.22)]">
         <div className="max-w-6xl mx-auto px-6">
           <section className="py-16">
-            <div className="flex border-b border-[#CFC5B4] justify-start space-x-8 text-xs mb-8 font-light uppercase tracking-[0.2em] text-[#9D8751]">
+            <div className="flex border-b border-[rgba(212,167,44,0.22)] justify-start space-x-8 text-xs mb-8 font-light uppercase tracking-[0.2em] text-[#9D8751]">
               <button
                 type="button"
                 onClick={() => setActiveTab("benefits")}
                 className={`pb-2.5 transition-all font-semibold ${
                   activeTab === "benefits"
-                    ? "border-b-2 border-[#0D0E11] text-[#0D0E11]"
-                    : "hover:text-[#111111]"
+                    ? "border-b-2 border-[#D4A72C] text-[#D4A72C]"
+                    : "hover:text-[#F5F0E6]"
                 }`}
               >
                 Benefits
@@ -605,8 +857,8 @@ export default function ProductView({
                 onClick={() => setActiveTab("howToUse")}
                 className={`pb-2.5 transition-all font-semibold ${
                   activeTab === "howToUse"
-                    ? "border-b-2 border-[#0D0E11] text-[#0D0E11]"
-                    : "hover:text-[#111111]"
+                    ? "border-b-2 border-[#D4A72C] text-[#D4A72C]"
+                    : "hover:text-[#F5F0E6]"
                 }`}
               >
                 How to Use
@@ -616,50 +868,62 @@ export default function ProductView({
                 onClick={() => setActiveTab("ingredients")}
                 className={`pb-2.5 transition-all font-semibold ${
                   activeTab === "ingredients"
-                    ? "border-b-2 border-[#0D0E11] text-[#0D0E11]"
-                    : "hover:text-[#111111]"
+                    ? "border-b-2 border-[#D4A72C] text-[#D4A72C]"
+                    : "hover:text-[#F5F0E6]"
                 }`}
               >
                 Ingredients
               </button>
             </div>
 
-            <div className="text-[#34302A] font-light text-sm leading-relaxed max-w-2xl">
+            <div className="text-[#CFC5B4] font-light text-sm leading-relaxed max-w-2xl">
               {activeTab === "benefits" && (
-                <div className="space-y-3">
-                  <p className="italic text-xs text-neutral-450 mb-3">[Skincare benefits statement]</p>
-                  <ul className="list-disc list-inside space-y-2 text-[#34302A]">
-                    <li>Formulated with botanical precision for overnight moisture reinforcement.</li>
-                    <li>Supports skin renewal and targets natural barrier repair.</li>
-                    <li>Sinks in quickly without leaving heavy or greasy boundaries.</li>
-                    <li>Hypoallergenic composition tested for all Indian skin profiles.</li>
+                <div className="space-y-3 animate-fadeIn">
+                  <ul className="list-disc list-inside space-y-2.5 text-[#CFC5B4] leading-relaxed">
+                    <li>Designed for an overnight skincare routine.</li>
+                    <li>Helps support a more even-looking skin appearance.</li>
+                    <li>Formulated for skin that experiences blemishes and uneven-looking tone.</li>
+                    <li>Provides a simple overnight care step for the skin.</li>
+                    <li>Suitable for all skin types, as stated on the product label.</li>
                   </ul>
                 </div>
               )}
               
               {activeTab === "howToUse" && (
-                <div className="space-y-2">
-                  <p className="italic text-xs text-neutral-450 mb-3">[Application guide details]</p>
-                  <ol className="list-decimal list-inside space-y-2 text-[#34302A]">
-                    <li>Cleanse face thoroughly and pat dry with an ivory cloth.</li>
-                    <li>Apply a small, refined pearl-sized portion of NOX.</li>
-                    <li>Gently massage upwards until absorbed fully.</li>
-                    <li>Complete nightly for dynamic overnight cell restoration.</li>
-                  </ol>
+                <div className="space-y-6 text-xs">
+                  <div>
+                    <h4 className="text-[10px] uppercase tracking-[0.2em] font-semibold text-[#D4A72C] mb-3">How To Use</h4>
+                    <ol className="list-decimal list-inside space-y-2 text-[#CFC5B4] leading-relaxed">
+                      <li>Wash your face with a herbal face wash and pat dry.</li>
+                      <li>Apply a very small amount of NOX Night Cream evenly over your face.</li>
+                      <li>Leave it on overnight.</li>
+                      <li>In the morning, wash your face with cold water.</li>
+                    </ol>
+                  </div>
+                  <div className="pt-4 border-t border-[rgba(212,167,44,0.22)]">
+                    <h4 className="text-[10px] uppercase tracking-[0.2em] font-semibold text-[#D4A72C] mb-3">Usage & Care</h4>
+                    <ul className="list-disc list-inside space-y-2 text-[#CFC5B4] leading-relaxed">
+                      <li>For external use only.</li>
+                      <li>Keep out of reach of children.</li>
+                      <li>In case of irritation, wash immediately.</li>
+                      <li>Store in a cool, dry place.</li>
+                      <li>Suitable for all skin types.</li>
+                    </ul>
+                  </div>
                 </div>
               )}
               
               {activeTab === "ingredients" && (
-                <div className="bg-white p-6 rounded-xl border border-[#CFC5B4] text-xs">
+                <div className="bg-[#0D0E11] p-6 rounded-xl border border-[rgba(212,167,44,0.22)] text-xs">
                   <div className="flex flex-wrap gap-2 mb-4">
-                    <span className="bg-[#F5F0E6] text-[#0D0E11] border border-[#CFC5B4] px-3 py-1 rounded-full text-[9px] uppercase tracking-wider font-semibold">Hyaluronic Acid</span>
-                    <span className="bg-[#F5F0E6] text-[#0D0E11] border border-[#CFC5B4] px-3 py-1 rounded-full text-[9px] uppercase tracking-wider font-semibold">Ceramides</span>
-                    <span className="bg-[#F5F0E6] text-[#0D0E11] border border-[#CFC5B4] px-3 py-1 rounded-full text-[9px] uppercase tracking-wider font-semibold">Niacinamide</span>
-                    <span className="bg-[#F5F0E6] text-[#0D0E11] border border-[#CFC5B4] px-3 py-1 rounded-full text-[9px] uppercase tracking-wider font-semibold">Retinol</span>
+                    <span className="bg-[#08090B] text-[#F5F0E6] border border-[rgba(212,167,44,0.22)] px-3 py-1 rounded-full text-[9px] uppercase tracking-wider font-semibold">Tretinoin</span>
+                    <span className="bg-[#08090B] text-[#F5F0E6] border border-[rgba(212,167,44,0.22)] px-3 py-1 rounded-full text-[9px] uppercase tracking-wider font-semibold">Hydroquinone</span>
+                    <span className="bg-[#08090B] text-[#F5F0E6] border border-[rgba(212,167,44,0.22)] px-3 py-1 rounded-full text-[9px] uppercase tracking-wider font-semibold">Niacinamide (Vitamin B3)</span>
+                    <span className="bg-[#08090B] text-[#F5F0E6] border border-[rgba(212,167,44,0.22)] px-3 py-1 rounded-full text-[9px] uppercase tracking-wider font-semibold">Licorice Root Extract</span>
+                    <span className="bg-[#08090B] text-[#F5F0E6] border border-[rgba(212,167,44,0.22)] px-3 py-1 rounded-full text-[9px] uppercase tracking-wider font-semibold">Saffron</span>
                   </div>
-                  <p className="italic text-[9px] text-[#9D8751] mb-2">[Skincare formulation credentials]</p>
-                  <p className="text-[#34302A] font-mono leading-relaxed select-all">
-                    Aqua, Caprylic/Capric Triglyceride, Glycerin, Cetear Alcohol, Glyceryl Stearate, PEG-100 Stearate, Dimethicone, Phenoxyethanol, Ethylhexylglycerin, Disodium EDTA, Parfum.
+                  <p className="text-[#CFC5B4] font-mono leading-relaxed select-all">
+                    Tretinoin, Hydroquinone, Niacinamide (Vitamin B3), Licorice Root Extract, Saffron.
                   </p>
                 </div>
               )}
@@ -668,14 +932,14 @@ export default function ProductView({
         </div>
       </div>
 
-      {/* Checkout Form Section (LIGHT background - DARK card container) */}
+      {/* Checkout Form Section (DARK - Charcoal Background) */}
       <section
         id="checkout"
         ref={checkoutRef}
-        className="py-16 md:py-24 bg-[#F5F0E6] text-[#F5F0E6] scroll-mt-20 w-full"
+        className="py-16 md:py-24 bg-[#0D0E11] text-[#F5F0E6] scroll-mt-20 w-full border-t border-[rgba(212,167,44,0.22)]"
       >
         <div className="max-w-xl mx-auto px-6">
-          <div className="bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] rounded-2xl p-6 md:p-10 shadow-2xl">
+          <div className="bg-[#08090B] border border-[rgba(212,167,44,0.22)] rounded-2xl p-6 md:p-10 shadow-2xl">
             <div className="text-center mb-8">
               <span className="text-[10px] uppercase tracking-[0.25em] text-[#D4A72C] font-semibold">Fulfillment Checkout</span>
               <h2 className="font-serif text-3xl font-light text-[#F5F0E6] mt-1 tracking-wide">Fulfillment Order</h2>
@@ -683,26 +947,121 @@ export default function ProductView({
             </div>
 
             {/* Premium High-Contrast Order Summary Card */}
-            <div className="bg-[#08090B] border border-[rgba(212,167,44,0.22)] p-5 rounded-xl mb-8 space-y-3.5 text-xs text-[#CFC5B4]">
-              <h3 className="text-[10px] uppercase tracking-[0.2em] font-bold text-[#F5F0E6] border-b border-[rgba(212,167,44,0.22)] pb-2 mb-2.5">
-                ORDER SUMMARY
-              </h3>
+            <div className="bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] p-5 rounded-xl mb-8 space-y-4 text-xs text-[#CFC5B4]">
+              <div className="flex items-center justify-between border-b border-[rgba(212,167,44,0.22)] pb-2 mb-2.5">
+                <h3 className="text-[10px] uppercase tracking-[0.2em] font-bold text-[#F5F0E6]">
+                  ORDER SUMMARY
+                </h3>
+                <span className="text-[10px] uppercase tracking-wider text-[#D4A72C] font-semibold">
+                  {totalJars} {totalJars === 1 ? "Jar" : "Jars"}
+                </span>
+              </div>
               
-              <div className="space-y-2.5 font-normal text-[#CFC5B4]">
-                <p className="font-semibold text-[#F5F0E6] text-sm">NOX Night Cream</p>
-                <div className="flex justify-between">
-                  <span>Size:</span>
-                  <span className="text-[#F5F0E6] font-medium">{selectedSize === "Small" ? "15g" : "50g"}</span>
+              {/* Line Items */}
+              <div className="space-y-3 font-normal text-[#CFC5B4]">
+                {/* 15g Variant Row */}
+                {cart["15g"] > 0 && (
+                  <div className="flex items-center justify-between py-2 border-b border-[rgba(212,167,44,0.1)]">
+                    <div>
+                      <p className="font-semibold text-[#F5F0E6] text-xs">NOX Night Cream — 15g</p>
+                      <p className="text-[11px] text-[#9D8751]">₹699 per jar</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center border border-[rgba(212,167,44,0.22)] rounded-full bg-[#08090B] px-2 py-0.5">
+                        <button
+                          type="button"
+                          onClick={() => updateCartQuantity("15g", -1)}
+                          className="p-1 text-[#D4A72C] hover:text-[#F5F0E6] transition-colors"
+                          aria-label="Decrease 15g quantity"
+                        >
+                          <Minus className="w-3 h-3" />
+                        </button>
+                        <span className="px-2.5 text-xs font-semibold text-[#F5F0E6] min-w-[20px] text-center">
+                          {cart["15g"]}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => updateCartQuantity("15g", 1)}
+                          className="p-1 text-[#D4A72C] hover:text-[#F5F0E6] transition-colors"
+                          aria-label="Increase 15g quantity"
+                        >
+                          <Plus className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <span className="font-semibold text-[#F5F0E6] min-w-[65px] text-right">
+                        ₹{cart["15g"] * 699}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* 50g Variant Row */}
+                {cart["50g"] > 0 && (
+                  <div className="flex items-center justify-between py-2 border-b border-[rgba(212,167,44,0.1)]">
+                    <div>
+                      <p className="font-semibold text-[#F5F0E6] text-xs">NOX Night Cream — 50g</p>
+                      <p className="text-[11px] text-[#9D8751]">₹1,299 per jar</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center border border-[rgba(212,167,44,0.22)] rounded-full bg-[#08090B] px-2 py-0.5">
+                        <button
+                          type="button"
+                          onClick={() => updateCartQuantity("50g", -1)}
+                          className="p-1 text-[#D4A72C] hover:text-[#F5F0E6] transition-colors"
+                          aria-label="Decrease 50g quantity"
+                        >
+                          <Minus className="w-3 h-3" />
+                        </button>
+                        <span className="px-2.5 text-xs font-semibold text-[#F5F0E6] min-w-[20px] text-center">
+                          {cart["50g"]}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => updateCartQuantity("50g", 1)}
+                          className="p-1 text-[#D4A72C] hover:text-[#F5F0E6] transition-colors"
+                          aria-label="Increase 50g quantity"
+                        >
+                          <Plus className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <span className="font-semibold text-[#F5F0E6] min-w-[65px] text-right">
+                        ₹{cart["50g"] * 1299}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Empty Cart Notice */}
+                {totalJars === 0 && (
+                  <div className="py-4 text-center text-[#9D8751] text-xs">
+                    Your cart is empty. Please select a variant above.
+                  </div>
+                )}
+
+                {/* Quick-add buttons for missing variant */}
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {cart["15g"] === 0 && (
+                    <button
+                      type="button"
+                      onClick={() => updateCartQuantity("15g", 1)}
+                      className="text-[10px] uppercase tracking-wider text-[#D4A72C] bg-[#08090B] hover:bg-[#15171C] border border-[rgba(212,167,44,0.3)] hover:border-[#D4A72C] px-3 py-1.5 rounded-full transition-all flex items-center gap-1 font-semibold"
+                    >
+                      <Plus className="w-3 h-3" /> Add 15g (₹699)
+                    </button>
+                  )}
+                  {cart["50g"] === 0 && (
+                    <button
+                      type="button"
+                      onClick={() => updateCartQuantity("50g", 1)}
+                      className="text-[10px] uppercase tracking-wider text-[#D4A72C] bg-[#08090B] hover:bg-[#15171C] border border-[rgba(212,167,44,0.3)] hover:border-[#D4A72C] px-3 py-1.5 rounded-full transition-all flex items-center gap-1 font-semibold"
+                    >
+                      <Plus className="w-3 h-3" /> Add 50g (₹1,299)
+                    </button>
+                  )}
                 </div>
-                <div className="flex justify-between">
-                  <span>Quantity:</span>
-                  <span className="text-[#F5F0E6] font-medium">{quantity}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Unit Price:</span>
-                  <span className="text-[#F5F0E6] font-medium">₹{selectedSize === "Small" ? 699 : 1299}</span>
-                </div>
-                <div className="flex justify-between border-t border-[rgba(212,167,44,0.22)] pt-2.5 mt-1">
+
+                {/* Subtotal */}
+                <div className="flex justify-between border-t border-[rgba(212,167,44,0.22)] pt-2.5 mt-2">
                   <span>Subtotal:</span>
                   <span className="text-[#F5F0E6] font-semibold">₹{subtotal}</span>
                 </div>
@@ -710,7 +1069,9 @@ export default function ProductView({
               
               <div className="flex justify-between text-[#CFC5B4] pb-2 border-b border-[rgba(212,167,44,0.22)]">
                 <span>Shipping</span>
-                <span className="text-[#D4A72C] font-bold uppercase tracking-wider">FREE</span>
+                <span className="text-[#D4A72C] font-bold uppercase tracking-wider">
+                  {shippingChargeInr === 0 ? "FREE" : `₹${shippingChargeInr}`}
+                </span>
               </div>
               
               <div className="flex justify-between items-baseline pt-2.5 text-[#F5F0E6]">
@@ -718,6 +1079,160 @@ export default function ProductView({
                 <span className="font-serif text-xl font-bold text-[#D4A72C]">₹{total}</span>
               </div>
             </div>
+
+            {/* Customer Account Authentication Requirement Box */}
+            {customer ? (
+              <div className="bg-[#08090B] border border-[rgba(212,167,44,0.3)] rounded-xl p-4 flex justify-between items-center text-xs mb-6 shadow-md">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-[#0D0E11] border border-[#D4A72C] flex items-center justify-center text-[#D4A72C]">
+                    <User className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-[#9D8751] block text-[9px] uppercase tracking-wider">Signed In Customer</span>
+                    <span className="text-[#F5F0E6] font-medium">{customer.name} • {customer.phone}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCustomerLogout}
+                  className="text-[10px] text-[#D4A72C] hover:underline uppercase tracking-wider font-semibold"
+                >
+                  Sign Out
+                </button>
+              </div>
+            ) : (
+              <div className="bg-[#08090B] border border-[#D4A72C]/40 rounded-xl p-5 mb-6 space-y-4 text-left shadow-lg">
+                <div className="flex items-center justify-between border-b border-[rgba(212,167,44,0.22)] pb-3">
+                  <div className="flex items-center gap-2">
+                    <User className="w-4 h-4 text-[#D4A72C]" />
+                    <span className="text-xs uppercase tracking-wider text-[#F5F0E6] font-semibold">
+                      Account Required to Purchase
+                    </span>
+                  </div>
+                  <div className="flex gap-2 text-[10px] font-semibold uppercase tracking-wider">
+                    <button
+                      type="button"
+                      onClick={() => { setAuthMode("login"); setAuthError(null); }}
+                      className={`px-3 py-1 rounded-full transition-all ${
+                        authMode === "login"
+                          ? "bg-[#D4A72C] text-[#0D0E11]"
+                          : "text-[#CFC5B4] hover:text-[#F5F0E6] border border-[rgba(212,167,44,0.22)]"
+                      }`}
+                    >
+                      Sign In
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setAuthMode("register"); setAuthError(null); }}
+                      className={`px-3 py-1 rounded-full transition-all ${
+                        authMode === "register"
+                          ? "bg-[#D4A72C] text-[#0D0E11]"
+                          : "text-[#CFC5B4] hover:text-[#F5F0E6] border border-[rgba(212,167,44,0.22)]"
+                      }`}
+                    >
+                      Register
+                    </button>
+                  </div>
+                </div>
+
+                {authError && (
+                  <div className="p-3 bg-[#2A1616] border border-[#EF4444]/40 text-[#FCA5A5] rounded-lg text-xs flex gap-2 items-center">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 text-[#EF4444]" />
+                    <span>{authError}</span>
+                  </div>
+                )}
+                {authSuccess && (
+                  <div className="p-3 bg-[#1B2A1E] border border-[#22C55E]/30 text-[#86EFAC] rounded-lg text-xs flex gap-2 items-center">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-[#22C55E]" />
+                    <span>{authSuccess}</span>
+                  </div>
+                )}
+
+                {authMode === "login" ? (
+                  <div className="space-y-3">
+                    <div>
+                      <input
+                        type="text"
+                        value={authLoginId}
+                        onChange={(e) => setAuthLoginId(e.target.value)}
+                        placeholder="Registered Email or 10-digit Mobile"
+                        className="w-full bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] px-3.5 py-2.5 rounded-lg text-xs text-[#F5F0E6] placeholder-[#9D8751] focus:outline-none focus:border-[#D4A72C]"
+                      />
+                    </div>
+                    <div>
+                      <input
+                        type="password"
+                        value={authPassword}
+                        onChange={(e) => setAuthPassword(e.target.value)}
+                        placeholder="Password"
+                        className="w-full bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] px-3.5 py-2.5 rounded-lg text-xs text-[#F5F0E6] placeholder-[#9D8751] focus:outline-none focus:border-[#D4A72C]"
+                      />
+                    </div>
+                    <div className="flex justify-between items-center pt-1">
+                      <a
+                        href="/reset-password"
+                        className="text-[10px] text-[#9D8751] hover:text-[#D4A72C] transition-colors"
+                      >
+                        Forgot Password?
+                      </a>
+                      <button
+                        type="button"
+                        onClick={handleCustomerLogin}
+                        disabled={authSubmitting}
+                        className="bg-[#D4A72C] text-[#0D0E11] font-semibold px-5 py-2 rounded-full text-xs uppercase tracking-wider hover:bg-[#B88A20] transition-all disabled:opacity-50 cursor-pointer"
+                      >
+                        {authSubmitting ? "Signing In..." : "Sign In & Continue"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <input
+                        type="text"
+                        value={regName}
+                        onChange={(e) => setRegName(e.target.value)}
+                        placeholder="Full Name"
+                        className="w-full bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] px-3.5 py-2.5 rounded-lg text-xs text-[#F5F0E6] placeholder-[#9D8751] focus:outline-none focus:border-[#D4A72C]"
+                      />
+                      <input
+                        type="tel"
+                        value={regPhone}
+                        onChange={(e) => setRegPhone(e.target.value)}
+                        placeholder="10-digit Mobile Number"
+                        className="w-full bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] px-3.5 py-2.5 rounded-lg text-xs text-[#F5F0E6] placeholder-[#9D8751] focus:outline-none focus:border-[#D4A72C]"
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <input
+                        type="email"
+                        value={regEmail}
+                        onChange={(e) => setRegEmail(e.target.value)}
+                        placeholder="Email Address"
+                        className="w-full bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] px-3.5 py-2.5 rounded-lg text-xs text-[#F5F0E6] placeholder-[#9D8751] focus:outline-none focus:border-[#D4A72C]"
+                      />
+                      <input
+                        type="password"
+                        value={regPassword}
+                        onChange={(e) => setRegPassword(e.target.value)}
+                        placeholder="Password (min 8 chars)"
+                        className="w-full bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] px-3.5 py-2.5 rounded-lg text-xs text-[#F5F0E6] placeholder-[#9D8751] focus:outline-none focus:border-[#D4A72C]"
+                      />
+                    </div>
+                    <div className="text-right pt-1">
+                      <button
+                        type="button"
+                        onClick={handleCustomerRegister}
+                        disabled={authSubmitting}
+                        className="bg-[#D4A72C] text-[#0D0E11] font-semibold px-5 py-2 rounded-full text-xs uppercase tracking-wider hover:bg-[#B88A20] transition-all disabled:opacity-50 cursor-pointer"
+                      >
+                        {authSubmitting ? "Registering..." : "Create Account & Continue"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <form onSubmit={handleProceedToPayment} className="space-y-6">
               {/* Full Name */}
@@ -734,7 +1249,7 @@ export default function ProductView({
                     if (formErrors.customerName) setFormErrors({ ...formErrors, customerName: "" });
                   }}
                   placeholder="Enter your full name"
-                  className="w-full bg-[#08090B] border border-[rgba(212,167,44,0.22)] px-4 py-3 rounded-lg text-xs text-[#F5F0E6] placeholder-[#9D8751] focus:outline-none focus:border-[#D4A72C] focus:ring-1 focus:ring-[#D4A72C]/40"
+                  className="w-full bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] px-4 py-3 rounded-lg text-xs text-[#F5F0E6] placeholder-[#9D8751] focus:outline-none focus:border-[#D4A72C] focus:ring-1 focus:ring-[#D4A72C]/40"
                 />
                 {formErrors.customerName && (
                   <p className="mt-1.5 flex items-center gap-1 text-xs text-red-450">
@@ -756,8 +1271,8 @@ export default function ProductView({
                     setPhone(e.target.value);
                     if (formErrors.phone) setFormErrors({ ...formErrors, phone: "" });
                   }}
-                  placeholder="e.g. 9876543210"
-                  className="w-full bg-[#08090B] border border-[rgba(212,167,44,0.22)] px-4 py-3 rounded-lg text-xs text-[#F5F0E6] placeholder-[#9D8751] focus:outline-none focus:border-[#D4A72C] focus:ring-1 focus:ring-[#D4A72C]/40"
+                  placeholder="e.g. 8309053090"
+                  className="w-full bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] px-4 py-3 rounded-lg text-xs text-[#F5F0E6] placeholder-[#9D8751] focus:outline-none focus:border-[#D4A72C] focus:ring-1 focus:ring-[#D4A72C]/40"
                 />
                 {formErrors.phone && (
                   <p className="mt-1.5 flex items-center gap-1 text-xs text-red-450">
@@ -780,7 +1295,7 @@ export default function ProductView({
                     if (formErrors.address) setFormErrors({ ...formErrors, address: "" });
                   }}
                   placeholder="House details, building details, street details, pincode, city, state"
-                  className="w-full bg-[#08090B] border border-[rgba(212,167,44,0.22)] px-4 py-3 rounded-lg text-xs text-[#F5F0E6] placeholder-[#9D8751] resize-none focus:outline-none focus:border-[#D4A72C] focus:ring-1 focus:ring-[#D4A72C]/40"
+                  className="w-full bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] px-4 py-3 rounded-lg text-xs text-[#F5F0E6] placeholder-[#9D8751] resize-none focus:outline-none focus:border-[#D4A72C] focus:ring-1 focus:ring-[#D4A72C]/40"
                 />
                 {formErrors.address && (
                   <p className="mt-1.5 flex items-center gap-1 text-xs text-red-450">
@@ -806,7 +1321,7 @@ export default function ProductView({
                       if (formErrors.pincode) setFormErrors({ ...formErrors, pincode: "" });
                     }}
                     placeholder="6-digit PIN code"
-                    className="w-full bg-[#08090B] border border-[rgba(212,167,44,0.22)] px-4 py-3 rounded-lg text-xs text-[#F5F0E6] placeholder-[#9D8751] focus:outline-none focus:border-[#D4A72C] focus:ring-1 focus:ring-[#D4A72C]/40"
+                    className="w-full bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] px-4 py-3 rounded-lg text-xs text-[#F5F0E6] placeholder-[#9D8751] focus:outline-none focus:border-[#D4A72C] focus:ring-1 focus:ring-[#D4A72C]/40"
                   />
                   {formErrors.pincode && (
                     <p className="mt-1.5 flex items-center gap-1 text-xs text-red-450">
@@ -820,7 +1335,7 @@ export default function ProductView({
                   <span className="block text-[10px] uppercase tracking-wider text-[#D4A72C] mb-1.5 font-semibold">
                     Shipping Charge
                   </span>
-                  <div className="w-full bg-[#08090B] border border-[rgba(212,167,44,0.22)] px-4 py-3 rounded-lg text-xs text-[#D4A72C] font-semibold uppercase tracking-wider">
+                  <div className="w-full bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] px-4 py-3 rounded-lg text-xs text-[#D4A72C] font-semibold uppercase tracking-wider">
                     FREE DELIVERY
                   </div>
                 </div>
@@ -829,13 +1344,15 @@ export default function ProductView({
               {/* Proceed Button */}
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="w-full bg-[#D4A72C] hover:bg-[#B88A20] text-[#0D0E11] font-semibold py-4 px-8 rounded-full text-center text-xs uppercase tracking-[0.25em] shadow-md transition-all border border-[#B88A20] flex items-center justify-center gap-2"
+                disabled={isSubmitting || !customer}
+                className="w-full bg-[#D4A72C] hover:bg-[#B88A20] disabled:opacity-50 disabled:cursor-not-allowed text-[#0D0E11] font-semibold py-4 px-8 rounded-full text-center text-xs uppercase tracking-[0.25em] shadow-md transition-all border border-[#B88A20] flex items-center justify-center gap-2 cursor-pointer"
               >
                 {isSubmitting ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" /> SECURING CHECKOUT...
                   </>
+                ) : !customer ? (
+                  "SIGN IN / REGISTER TO CHECKOUT"
                 ) : (
                   "SECURE CHECKOUT"
                 )}
@@ -845,132 +1362,431 @@ export default function ProductView({
         </div>
       </section>
 
-      {/* Customer Tracking Section (LIGHT - Warm Ivory Surface with Dark Cards Container) */}
-      <section id="tracking" className="bg-[#F5F0E6] max-w-6xl mx-auto px-6 py-20 border-t border-[#CFC5B4] scroll-mt-20 text-[#151515]">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
-          
-          {/* Tracking History / Previous Orders */}
-          <div className="md:col-span-2 bg-white border border-[#CFC5B4] rounded-2xl p-6 shadow-md">
-            <h3 className="font-serif text-xl font-light text-[#0D0E11] mb-4">My Tracked Orders</h3>
-            
-            {trackingLoading ? (
-              <div className="py-12 text-center text-xs text-neutral-500 font-light flex items-center justify-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin text-[#D4A72C]" /> Loading tracked orders...
+      {/* Customer Tracking Section (DARK - Charcoal Background) */}
+      <section id="tracking" className="bg-[#0D0E11] max-w-6xl mx-auto px-6 py-20 border-t border-[rgba(212,167,44,0.22)] scroll-mt-20 text-[#F5F0E6]">
+        {!customer ? (
+          /* Logged-out State: Clean Luxury NOX-styled Login / Register / Forgot Password Portal */
+          <div className="max-w-xl mx-auto bg-[#08090B] border border-[rgba(212,167,44,0.3)] rounded-3xl p-8 md:p-10 shadow-2xl text-center">
+            <div className="w-12 h-12 bg-[#0D0E11] rounded-full flex items-center justify-center border border-[#D4A72C] mx-auto mb-4">
+              <User className="w-5 h-5 text-[#D4A72C]" />
+            </div>
+
+            <h3 className="font-serif text-2xl font-light text-[#F5F0E6] mb-1">
+              Customer Account &amp; Tracking
+            </h3>
+            <p className="text-xs text-[#CFC5B4] font-light mb-6">
+              Sign in to view your orders, live shipping status, and dispatch progress.
+            </p>
+
+            {/* Tab Controls */}
+            <div className="flex border-b border-[rgba(212,167,44,0.22)] mb-6 justify-center gap-4 text-xs uppercase tracking-widest font-semibold">
+              <button
+                type="button"
+                onClick={() => { setAuthMode("login"); setAuthError(null); setAuthSuccess(null); }}
+                className={`pb-3 transition-all border-b-2 cursor-pointer ${
+                  authMode === "login"
+                    ? "border-[#D4A72C] text-[#D4A72C]"
+                    : "border-transparent text-[#9D8751] hover:text-[#F5F0E6]"
+                }`}
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAuthMode("register"); setAuthError(null); setAuthSuccess(null); }}
+                className={`pb-3 transition-all border-b-2 cursor-pointer ${
+                  authMode === "register"
+                    ? "border-[#D4A72C] text-[#D4A72C]"
+                    : "border-transparent text-[#9D8751] hover:text-[#F5F0E6]"
+                }`}
+              >
+                Create Account
+              </button>
+              <button
+                type="button"
+                onClick={() => { setAuthMode("forgot"); setAuthError(null); setAuthSuccess(null); }}
+                className={`pb-3 transition-all border-b-2 cursor-pointer ${
+                  authMode === "forgot"
+                    ? "border-[#D4A72C] text-[#D4A72C]"
+                    : "border-transparent text-[#9D8751] hover:text-[#F5F0E6]"
+                }`}
+              >
+                Forgot Password
+              </button>
+            </div>
+
+            {authError && (
+              <div className="p-3.5 bg-[#2A1616] border border-[#EF4444]/40 text-[#FCA5A5] rounded-xl text-xs flex gap-2.5 items-start mb-6 text-left">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-[#EF4444]" />
+                <span>{authError}</span>
               </div>
-            ) : trackingError ? (
-              <div className="py-12 text-center text-xs text-rose-700 font-light">
-                {trackingError}
+            )}
+
+            {authSuccess && (
+              <div className="p-3.5 bg-[#1B2A1E] border border-[#22C55E]/30 text-[#86EFAC] rounded-xl text-xs flex gap-2.5 items-start mb-6 text-left">
+                <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-[#22C55E]" />
+                <span>{authSuccess}</span>
               </div>
-            ) : trackedOrders.length === 0 ? (
-              <div className="py-12 text-center text-xs text-neutral-550 font-light">
-                No orders tracked on this device. Place a successful order or import one.
+            )}
+
+            {authMode === "login" && (
+              <form onSubmit={handleCustomerLogin} className="space-y-4 text-left">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider text-[#D4A72C] mb-1.5 font-semibold">
+                    Email or Mobile Number
+                  </label>
+                  <input
+                    type="text"
+                    value={authLoginId}
+                    onChange={(e) => setAuthLoginId(e.target.value)}
+                    placeholder="e.g. customer@example.com or 8309053090"
+                    required
+                    className="w-full text-xs bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] rounded-xl px-4 py-3 focus:outline-none focus:border-[#D4A72C] text-[#F5F0E6] placeholder-[#9D8751] transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider text-[#D4A72C] mb-1.5 font-semibold">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    placeholder="Enter your password"
+                    required
+                    className="w-full text-xs bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] rounded-xl px-4 py-3 focus:outline-none focus:border-[#D4A72C] text-[#F5F0E6] placeholder-[#9D8751] transition-all"
+                  />
+                </div>
+
+                <div className="flex justify-between items-center text-xs pt-1">
+                  <button
+                    type="button"
+                    onClick={() => { setAuthMode("forgot"); setAuthError(null); }}
+                    className="text-[11px] text-[#9D8751] hover:text-[#D4A72C] transition-colors cursor-pointer"
+                  >
+                    Forgot Password?
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={authSubmitting}
+                    className="bg-[#D4A72C] hover:bg-[#B88A20] text-[#0D0E11] font-semibold py-2.5 px-6 rounded-full text-xs uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer shadow-md flex items-center gap-1.5"
+                  >
+                    {authSubmitting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Verifying...</> : "Sign In"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {authMode === "register" && (
+              <form onSubmit={handleCustomerRegister} className="space-y-4 text-left">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider text-[#D4A72C] mb-1.5 font-semibold">
+                    Full Name
+                  </label>
+                  <input
+                    type="text"
+                    value={regName}
+                    onChange={(e) => setRegName(e.target.value)}
+                    placeholder="Your legal or preferred name"
+                    required
+                    className="w-full text-xs bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] rounded-xl px-4 py-3 focus:outline-none focus:border-[#D4A72C] text-[#F5F0E6] placeholder-[#9D8751] transition-all"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] uppercase tracking-wider text-[#D4A72C] mb-1.5 font-semibold">
+                      Mobile Number (India)
+                    </label>
+                    <input
+                      type="tel"
+                      value={regPhone}
+                      onChange={(e) => setRegPhone(e.target.value)}
+                      placeholder="10-digit mobile"
+                      required
+                      className="w-full text-xs bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] rounded-xl px-4 py-3 focus:outline-none focus:border-[#D4A72C] text-[#F5F0E6] placeholder-[#9D8751] transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase tracking-wider text-[#D4A72C] mb-1.5 font-semibold">
+                      Email Address
+                    </label>
+                    <input
+                      type="email"
+                      value={regEmail}
+                      onChange={(e) => setRegEmail(e.target.value)}
+                      placeholder="e.g. name@example.com"
+                      required
+                      className="w-full text-xs bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] rounded-xl px-4 py-3 focus:outline-none focus:border-[#D4A72C] text-[#F5F0E6] placeholder-[#9D8751] transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider text-[#D4A72C] mb-1.5 font-semibold">
+                    Password (minimum 8 characters)
+                  </label>
+                  <input
+                    type="password"
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
+                    placeholder="Create a strong password"
+                    required
+                    minLength={8}
+                    className="w-full text-xs bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] rounded-xl px-4 py-3 focus:outline-none focus:border-[#D4A72C] text-[#F5F0E6] placeholder-[#9D8751] transition-all"
+                  />
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="submit"
+                    disabled={authSubmitting}
+                    className="w-full bg-[#D4A72C] hover:bg-[#B88A20] text-[#0D0E11] font-semibold py-3 px-6 rounded-full text-xs uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer shadow-md flex items-center justify-center gap-1.5"
+                  >
+                    {authSubmitting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Creating Account...</> : "Register & Sign In"}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {authMode === "forgot" && (
+              <form onSubmit={handleCustomerForgot} className="space-y-4 text-left">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-wider text-[#D4A72C] mb-1.5 font-semibold">
+                    Registered Email or Phone
+                  </label>
+                  <input
+                    type="text"
+                    value={forgotInput}
+                    onChange={(e) => setForgotInput(e.target.value)}
+                    placeholder="Enter email or 10-digit mobile"
+                    required
+                    className="w-full text-xs bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] rounded-xl px-4 py-3 focus:outline-none focus:border-[#D4A72C] text-[#F5F0E6] placeholder-[#9D8751] transition-all"
+                  />
+                </div>
+
+                <div className="pt-2 flex flex-col gap-3">
+                  <button
+                    type="submit"
+                    disabled={authSubmitting}
+                    className="w-full bg-[#D4A72C] hover:bg-[#B88A20] text-[#0D0E11] font-semibold py-3 px-6 rounded-full text-xs uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer shadow-md flex items-center justify-center gap-1.5"
+                  >
+                    {authSubmitting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Submitting...</> : "Request Password Reset"}
+                  </button>
+
+                  <a
+                    href="/reset-password"
+                    className="text-center text-[11px] text-[#D4A72C] hover:underline uppercase tracking-wider"
+                  >
+                    Have a reset token? Enter it on the reset page →
+                  </a>
+                </div>
+              </form>
+            )}
+          </div>
+        ) : (
+          /* Logged-in State: Authenticated Order History & Live Tracking */
+          <div className="space-y-8">
+            {/* Customer Header Bar */}
+            <div className="bg-[#08090B] border border-[rgba(212,167,44,0.22)] rounded-2xl p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-xl">
+              <div className="flex items-center gap-3.5">
+                <div className="w-11 h-11 rounded-full bg-[#0D0E11] border border-[#D4A72C] flex items-center justify-center text-[#D4A72C] shadow-inner">
+                  <User className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-serif text-xl font-light text-[#F5F0E6]">
+                    Welcome, {customer.name}
+                  </h3>
+                  <p className="text-[11px] text-[#9D8751] font-light">
+                    {customer.email} • {customer.phone}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 self-end sm:self-auto">
+                <span className="text-[10px] uppercase tracking-wider text-[#CFC5B4] bg-[#0D0E11] px-3 py-1.5 rounded-full border border-[rgba(212,167,44,0.22)]">
+                  {customerOrders.length} {customerOrders.length === 1 ? "Order" : "Orders"}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCustomerLogout}
+                  className="border border-[rgba(212,167,44,0.3)] hover:border-[#D4A72C] text-[#D4A72C] hover:text-[#F5F0E6] px-4 py-1.5 rounded-full text-[10px] uppercase tracking-wider font-semibold transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <LogOut className="w-3 h-3" /> Sign Out
+                </button>
+              </div>
+            </div>
+
+            {/* Orders Section */}
+            {ordersLoading ? (
+              <div className="bg-[#08090B] border border-[rgba(212,167,44,0.22)] rounded-2xl p-12 text-center text-xs text-[#CFC5B4] font-light flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-[#D4A72C]" /> Loading your orders...
+              </div>
+            ) : ordersError ? (
+              <div className="bg-[#08090B] border border-red-500/30 rounded-2xl p-8 text-center text-xs text-rose-400">
+                <p className="mb-3">{ordersError}</p>
+                <button
+                  onClick={loadCustomerOrders}
+                  className="bg-[#D4A72C] text-[#0D0E11] px-4 py-1.5 rounded-full text-2xs uppercase tracking-wider font-semibold cursor-pointer"
+                >
+                  Retry Loading
+                </button>
+              </div>
+            ) : customerOrders.length === 0 ? (
+              <div className="bg-[#08090B] border border-[rgba(212,167,44,0.22)] rounded-2xl p-12 text-center space-y-4">
+                <p className="font-serif text-lg text-[#F5F0E6] font-light">No Orders Placed Yet</p>
+                <p className="text-xs text-[#CFC5B4] font-light max-w-md mx-auto leading-relaxed">
+                  You do not have any orders associated with this account. Select your desired variant above to experience NOX Night Cream.
+                </p>
+                <a
+                  href="#product"
+                  className="inline-block bg-[#D4A72C] hover:bg-[#B88A20] text-[#0D0E11] font-semibold py-2.5 px-6 rounded-full text-xs uppercase tracking-widest transition-all"
+                >
+                  Explore Variants
+                </a>
               </div>
             ) : (
-              <div className="space-y-4">
-                {trackedOrders.map((order) => {
-                  return (
-                    <div key={order.orderId} className="flex flex-col border border-[rgba(212,167,44,0.22)] rounded-xl p-6 bg-[#0D0E11] text-xs text-[#F5F0E6]">
-                      <div className="flex justify-between items-start border-b border-[rgba(212,167,44,0.22)] pb-4 mb-4">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-sm text-[#F5F0E6]">{order.orderId}</span>
-                            <span className="text-[10px] text-[#9D8751] font-light">
-                              {new Date(order.createdAt).toLocaleDateString("en-IN")}
-                            </span>
-                          </div>
-                          <div className="text-[#CFC5B4] font-medium">
-                            Amount: <span className="text-[#D4A72C]">₹{order.amount / 100}</span>
-                          </div>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+                {/* Orders List Column */}
+                <div className="lg:col-span-1 space-y-4">
+                  <h4 className="text-[10px] uppercase tracking-[0.2em] text-[#9D8751] font-semibold mb-2">
+                    Select Order to Inspect
+                  </h4>
+                  {customerOrders.map((ord) => {
+                    const isSelected = selectedOrderId === ord.orderId;
+                    return (
+                      <div
+                        key={ord.orderId}
+                        onClick={() => setSelectedOrderId(ord.orderId)}
+                        className={`p-5 rounded-2xl border transition-all cursor-pointer text-left ${
+                          isSelected
+                            ? "bg-[#0D0E11] border-[#D4A72C] shadow-lg shadow-[#D4A72C]/10"
+                            : "bg-[#08090B] border-[rgba(212,167,44,0.22)] hover:border-[#9D8751]"
+                        }`}
+                      >
+                        <div className="flex justify-between items-start mb-2">
+                          <span className="font-bold text-sm text-[#F5F0E6] font-mono">
+                            {ord.orderId}
+                          </span>
+                          <span className="font-serif font-bold text-sm text-[#D4A72C]">
+                            ₹{ord.amount / 100}
+                          </span>
                         </div>
-                        
-                        <button
-                          onClick={() => router.push(`/order-confirmation/${order.orderId}`)}
-                          className="border border-[#B88A20] text-[#D4A72C] hover:bg-[#D4A72C] hover:text-[#0D0E11] px-4 py-1.5 rounded-full text-[9px] font-bold tracking-wider uppercase transition-all"
-                        >
-                          View Order
-                        </button>
-                      </div>
 
-                      {/* Progress Timeline */}
-                      <div className="bg-[#08090B] border border-[rgba(212,167,44,0.22)] rounded-xl p-4">
-                        <OrderTimeline paymentStatus={order.paymentStatus} deliveryStatus={order.deliveryStatus} />
+                        <div className="text-[10px] text-[#9D8751] mb-3">
+                          {new Date(ord.createdAt).toLocaleDateString("en-IN", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          })}
+                        </div>
+
+                        <div className="flex flex-wrap gap-2 text-[9px] uppercase tracking-wider font-semibold">
+                          <span
+                            className={`px-2 py-0.5 rounded-full border ${
+                              ord.paymentStatus === "PAID"
+                                ? "bg-emerald-950/60 border-emerald-500/50 text-emerald-400"
+                                : "bg-amber-950/60 border-amber-500/50 text-amber-400"
+                            }`}
+                          >
+                            {ord.paymentStatus}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded-full border ${
+                              ord.deliveryStatus === "SENT"
+                                ? "bg-emerald-950/60 border-emerald-500/50 text-emerald-400"
+                                : "bg-neutral-900 border-neutral-700 text-neutral-400"
+                            }`}
+                          >
+                            {ord.deliveryStatus === "SENT" ? "SENT" : "PROCESSING"}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+
+                {/* Selected Order Detailed Status & Timeline Column */}
+                <div className="lg:col-span-2 bg-[#08090B] border border-[rgba(212,167,44,0.22)] rounded-2xl p-6 md:p-8 shadow-xl text-left">
+                  {(() => {
+                    const currentOrder = customerOrders.find((o) => o.orderId === selectedOrderId) || customerOrders[0];
+                    if (!currentOrder) return null;
+
+                    return (
+                      <div className="space-y-6">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-[rgba(212,167,44,0.22)] pb-4 gap-3">
+                          <div>
+                            <div className="flex items-center gap-3">
+                              <h4 className="font-mono text-xl font-bold text-[#F5F0E6]">
+                                {currentOrder.orderId}
+                              </h4>
+                              <span
+                                className={`text-[10px] font-semibold uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${
+                                  currentOrder.deliveryStatus === "SENT"
+                                    ? "bg-emerald-950 border-emerald-500 text-emerald-400"
+                                    : "bg-amber-950 border-amber-500 text-amber-400"
+                                }`}
+                              >
+                                {currentOrder.deliveryStatus === "SENT" ? "Dispatched / Sent" : "Processing"}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-[#9D8751] mt-1">
+                              Ordered on {new Date(currentOrder.createdAt).toLocaleString("en-IN")}
+                            </p>
+                          </div>
+
+                          <button
+                            onClick={() => router.push(`/order-confirmation/${currentOrder.orderId}`)}
+                            className="border border-[#D4A72C] text-[#D4A72C] hover:bg-[#D4A72C] hover:text-[#0D0E11] px-4 py-2 rounded-full text-[10px] font-bold tracking-wider uppercase transition-all flex items-center gap-1.5 cursor-pointer"
+                          >
+                            View Order Summary <ArrowRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        {/* Order Timeline Visualizer */}
+                        <div className="bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] rounded-2xl p-6">
+                          <h5 className="text-[10px] uppercase tracking-[0.2em] text-[#D4A72C] font-semibold mb-3">
+                            Live Delivery Progress
+                          </h5>
+                          <OrderTimeline
+                            paymentStatus={currentOrder.paymentStatus}
+                            deliveryStatus={currentOrder.deliveryStatus}
+                          />
+                        </div>
+
+                        {/* Order Items Breakdown */}
+                        {currentOrder.items && currentOrder.items.length > 0 && (
+                          <div className="border-t border-[rgba(212,167,44,0.22)] pt-5">
+                            <h5 className="text-[10px] uppercase tracking-[0.2em] text-[#9D8751] font-semibold mb-3">
+                              Order Items
+                            </h5>
+                            <div className="space-y-2">
+                              {currentOrder.items.map((item, idx) => (
+                                <div
+                                  key={idx}
+                                  className="flex justify-between items-center text-xs text-[#F5F0E6] bg-[#0D0E11] px-4 py-3 rounded-xl border border-[rgba(212,167,44,0.15)]"
+                                >
+                                  <div>
+                                    <span className="font-medium">{item.name}</span>
+                                    <span className="text-[#9D8751] ml-2">({item.size}) × {item.quantity}</span>
+                                  </div>
+                                  <span className="text-[#D4A72C] font-mono">
+                                    ₹{item.subtotal || item.unitPrice * item.quantity}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
             )}
           </div>
-
-          {/* Import / Track Form */}
-          <div className="md:col-span-1 bg-white border border-[#CFC5B4] rounded-2xl p-6 shadow-md">
-            <h3 className="font-serif text-lg font-light text-[#0D0E11] mb-2">Import Tracking</h3>
-            <p className="text-[#34302A] font-light text-[11px] leading-relaxed mb-4">
-              Access order progress or import status details placed on another device.
-            </p>
-            
-            <form onSubmit={handleImportOrder} className="space-y-4">
-              <div>
-                <label htmlFor="importOrderId" className="block text-3xs uppercase tracking-wider text-[#34302A] mb-1 font-semibold">
-                  Order ID
-                </label>
-                <input
-                  type="text"
-                  id="importOrderId"
-                  value={importOrderId}
-                  onChange={(e) => {
-                    setImportOrderId(e.target.value);
-                    setImportSuccess(false);
-                    setImportError(null);
-                  }}
-                  placeholder="e.g. NOX-00001"
-                  required
-                  className="w-full text-xs bg-[#F5F0E6] border border-[#CFC5B4] rounded-xl px-3 py-2.5 focus:outline-none focus:border-[#D4A72C] text-[#171717] placeholder-[#8A857C] transition-all"
-                />
-              </div>
-              
-              <div>
-                <label htmlFor="importPhone" className="block text-3xs uppercase tracking-wider text-[#34302A] mb-1 font-semibold">
-                  Mobile Number
-                </label>
-                <input
-                  type="tel"
-                  id="importPhone"
-                  value={importPhone}
-                  onChange={(e) => {
-                    setImportPhone(e.target.value);
-                    setImportSuccess(false);
-                    setImportError(null);
-                  }}
-                  placeholder="e.g. 9876543210"
-                  required
-                  className="w-full text-xs bg-[#F5F0E6] border border-[#CFC5B4] rounded-xl px-3 py-2.5 focus:outline-none focus:border-[#D4A72C] text-[#171717] placeholder-[#8A857C] transition-all"
-                />
-              </div>
-
-              {importError && (
-                <div className="p-3 bg-red-50 border border-red-200 text-red-800 rounded-xl text-2xs flex gap-2 items-start leading-relaxed">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  <span>{importError}</span>
-                </div>
-              )}
-
-              {importSuccess && (
-                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-2xs leading-relaxed">
-                  ✓ Order imported and verified successfully!
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={importLoading}
-                className="w-full bg-[#0D0E11] text-[#F5F0E6] hover:bg-[#D4A72C] hover:text-[#0D0E11] border border-[#B88A20] font-semibold py-2.5 rounded-full text-xs uppercase tracking-widest transition-all disabled:bg-[#CFC5B4]"
-              >
-                {importLoading ? "Verifying..." : "Track / Import"}
-              </button>
-            </form>
-          </div>
-        </div>
+        )}
       </section>
 
       {/* Mock Payment Simulation Modal */}

@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { CheckCircle2, ShieldCheck, Mail, ArrowRight } from "lucide-react";
 import { OrderTimeline } from "@/components/OrderTimeline";
+import { parseOrderItems } from "@/lib/order-utils";
 
 interface PageProps {
   params: Promise<{ orderId: string }>;
@@ -22,15 +23,10 @@ export default async function OrderConfirmationPage({ params }: PageProps) {
     return notFound();
   }
 
-  // Derive unit price and variant details dynamically from the order totals
-  const unitPricePaise = order.amount / order.quantity;
-  const isSmall = unitPricePaise === 69900;
-  const sizeName = isSmall ? "Small (15g)" : "Large (50g)";
-  const productPriceInr = isSmall ? 699 : 1299;
-  
+  const parsedItems = parseOrderItems(order.items);
   const amountRupees = order.amount / 100;
   const shippingChargeInr = parseInt(process.env.NOX_SHIPPING_CHARGE_INR || "0", 10);
-  const subtotal = productPriceInr * order.quantity;
+  const legacySubtotal = (order.amount - shippingChargeInr * 100) / 100;
 
   return (
     <div className="flex flex-col min-h-screen bg-[#0D0E11] text-[#F5F0E6]">
@@ -94,10 +90,19 @@ export default async function OrderConfirmationPage({ params }: PageProps) {
 
             <h3 className="text-[10px] uppercase tracking-[0.2em] font-semibold text-[#D4A72C] pt-3 border-t border-[rgba(212,167,44,0.22)]">Summary</h3>
             <div className="text-xs text-[#CFC5B4] space-y-2 font-light">
-              <div className="flex justify-between">
-                <span>NOX Skincare Cream ({sizeName}) × {order.quantity}</span>
-                <span>₹{subtotal}</span>
-              </div>
+              {parsedItems && parsedItems.length > 0 ? (
+                parsedItems.map((item, idx) => (
+                  <div key={idx} className="flex justify-between">
+                    <span>NOX Night Cream ({item.size}) × {item.quantity}</span>
+                    <span>₹{item.subtotal}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="flex justify-between">
+                  <span>NOX Night Cream × {order.quantity}</span>
+                  <span>₹{legacySubtotal}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span>Delivery / Shipping</span>
                 <span>{shippingChargeInr === 0 ? "Free" : `₹${shippingChargeInr}`}</span>
@@ -130,8 +135,8 @@ export default async function OrderConfirmationPage({ params }: PageProps) {
           <span className="flex items-center gap-1">
             <ShieldCheck className="w-3.5 h-3.5 text-[#D4A72C]" /> Secured
           </span>
-          <span className="flex items-center gap-1">
-            <Mail className="w-3.5 h-3.5 text-[#D4A72C]" /> support@nox.in
+          <span className="flex items-center gap-1 font-mono text-[9px]">
+            <Mail className="w-3.5 h-3.5 text-[#D4A72C]" /> noxelitecosmetics@gmail.com
           </span>
         </div>
       </main>
