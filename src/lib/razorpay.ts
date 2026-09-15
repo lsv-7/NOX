@@ -1,7 +1,7 @@
 import Razorpay from "razorpay";
 import crypto from "crypto";
 
-const isMockMode = process.env.NOX_MOCK_MODE === "true";
+const isMockMode = process.env.NODE_ENV !== "production" && process.env.NOX_MOCK_MODE === "true";
 
 export interface RazorpayOrder {
   id: string;

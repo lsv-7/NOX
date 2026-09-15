@@ -7,7 +7,7 @@ const SESSION_COOKIE_NAME = "nox_customer_session";
 const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function getSessionSecret(): string {
-  const secret = process.env.NOX_CUSTOMER_SESSION_SECRET || process.env.NOX_ADMIN_SESSION_SECRET;
+  const secret = process.env.NOX_CUSTOMER_SESSION_SECRET;
   if (!secret) {
     if (process.env.NODE_ENV === "production") {
       throw new Error("NOX_CUSTOMER_SESSION_SECRET environment variable is required in production.");

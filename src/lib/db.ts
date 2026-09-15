@@ -4,7 +4,7 @@ import { PrismaClient } from "@prisma/client";
 import fs from "fs";
 import path from "path";
 
-const isMockMode = process.env.NOX_MOCK_MODE === "true";
+const isMockMode = process.env.NODE_ENV !== "production" && process.env.NOX_MOCK_MODE === "true";
 const MOCK_DB_PATH = path.join(process.cwd(), "nox_mock_database.json");
 
 export interface Customer {
