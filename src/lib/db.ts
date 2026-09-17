@@ -14,17 +14,9 @@ export interface Customer {
   email: string;
   passwordHash: string;
   passwordChangedAt: Date;
+  mustChangePassword: boolean;
   createdAt: Date;
   updatedAt: Date;
-}
-
-export interface PasswordResetToken {
-  id: string;
-  customerId: string;
-  tokenHash: string;
-  expiresAt: Date;
-  usedAt: Date | null;
-  createdAt: Date;
 }
 
 export interface Order {
@@ -52,14 +44,13 @@ interface MockDatabase {
   orders: Order[];
   counter: number;
   customers?: Customer[];
-  resetTokens?: PasswordResetToken[];
 }
 
 // Helper to read mock db file
 function readMockDb(): MockDatabase {
   try {
     if (!fs.existsSync(MOCK_DB_PATH)) {
-      fs.writeFileSync(MOCK_DB_PATH, JSON.stringify({ orders: [], counter: 0, customers: [], resetTokens: [] }, null, 2));
+      fs.writeFileSync(MOCK_DB_PATH, JSON.stringify({ orders: [], counter: 0, customers: [] }, null, 2));
     }
     const content = fs.readFileSync(MOCK_DB_PATH, "utf-8");
     const data = JSON.parse(content);
@@ -77,19 +68,14 @@ function readMockDb(): MockDatabase {
       customers: (data.customers || []).map((c: Customer) => ({
         ...c,
         passwordChangedAt: c.passwordChangedAt ? new Date(c.passwordChangedAt) : new Date(c.createdAt),
+        mustChangePassword: Boolean(c.mustChangePassword),
         createdAt: new Date(c.createdAt),
         updatedAt: new Date(c.updatedAt),
-      })),
-      resetTokens: (data.resetTokens || []).map((t: PasswordResetToken) => ({
-        ...t,
-        expiresAt: new Date(t.expiresAt),
-        usedAt: t.usedAt ? new Date(t.usedAt) : null,
-        createdAt: new Date(t.createdAt),
       })),
     };
   } catch (error) {
     console.error("Failed to read mock database file:", error);
-    return { orders: [], counter: 0, customers: [], resetTokens: [] };
+    return { orders: [], counter: 0, customers: [] };
   }
 }
 
@@ -327,6 +313,7 @@ export const db = {
         email: string;
         passwordHash: string;
         passwordChangedAt?: Date;
+        mustChangePassword?: boolean;
       };
     }): Promise<Customer> {
       if (isMockMode) {
@@ -339,6 +326,7 @@ export const db = {
           email: args.data.email,
           passwordHash: args.data.passwordHash,
           passwordChangedAt: args.data.passwordChangedAt || new Date(),
+          mustChangePassword: args.data.mustChangePassword ?? false,
           createdAt: new Date(),
           updatedAt: new Date(),
         };
@@ -358,6 +346,7 @@ export const db = {
       data: {
         passwordHash?: string;
         passwordChangedAt?: Date;
+        mustChangePassword?: boolean;
         name?: string;
         phone?: string;
       };
@@ -388,93 +377,20 @@ export const db = {
         return customer as unknown as Customer;
       }
     },
-  },
 
-  passwordResetToken: {
-    async create(args: {
-      data: {
-        customerId: string;
-        tokenHash: string;
-        expiresAt: Date;
-      };
-    }): Promise<PasswordResetToken> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    async findMany(args?: any): Promise<Customer[]> {
       if (isMockMode) {
         const mockDb = readMockDb();
-        if (!mockDb.resetTokens) mockDb.resetTokens = [];
-        const token: PasswordResetToken = {
-          id: Math.random().toString(36).substring(2, 11),
-          customerId: args.data.customerId,
-          tokenHash: args.data.tokenHash,
-          expiresAt: args.data.expiresAt,
-          usedAt: null,
-          createdAt: new Date(),
-        };
-        mockDb.resetTokens.push(token);
-        writeMockDb(mockDb);
-        return token;
+        return (mockDb.customers || []).map((c) => ({
+          ...c,
+          createdAt: new Date(c.createdAt),
+          updatedAt: new Date(c.updatedAt),
+          passwordChangedAt: new Date(c.passwordChangedAt),
+        }));
       } else {
-        const token = await prismaClient!.passwordResetToken.create({
-          data: args.data,
-        });
-        return token as unknown as PasswordResetToken;
-      }
-    },
-
-    async findUnique(args: { where: { tokenHash: string } }): Promise<PasswordResetToken | null> {
-      if (isMockMode) {
-        const mockDb = readMockDb();
-        const token = (mockDb.resetTokens || []).find((t) => t.tokenHash === args.where.tokenHash);
-        return token || null;
-      } else {
-        const token = await prismaClient!.passwordResetToken.findUnique({
-          where: args.where,
-        });
-        return token as unknown as PasswordResetToken | null;
-      }
-    },
-
-    async update(args: {
-      where: { id?: string; tokenHash?: string };
-      data: { usedAt: Date };
-    }): Promise<PasswordResetToken> {
-      if (isMockMode) {
-        const mockDb = readMockDb();
-        if (!mockDb.resetTokens) mockDb.resetTokens = [];
-        const idx = mockDb.resetTokens.findIndex((t) => {
-          if (args.where.id && t.id === args.where.id) return true;
-          if (args.where.tokenHash && t.tokenHash === args.where.tokenHash) return true;
-          return false;
-        });
-        if (idx === -1) throw new Error("Reset token not found for update");
-        const updated: PasswordResetToken = {
-          ...mockDb.resetTokens[idx],
-          usedAt: args.data.usedAt,
-        };
-        mockDb.resetTokens[idx] = updated;
-        writeMockDb(mockDb);
-        return updated;
-      } else {
-        const token = await prismaClient!.passwordResetToken.update({
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          where: args.where as any,
-          data: args.data,
-        });
-        return token as unknown as PasswordResetToken;
-      }
-    },
-
-    async deleteMany(args: { where: { customerId?: string } }): Promise<{ count: number }> {
-      if (isMockMode) {
-        const mockDb = readMockDb();
-        if (!mockDb.resetTokens) mockDb.resetTokens = [];
-        const before = mockDb.resetTokens.length;
-        mockDb.resetTokens = mockDb.resetTokens.filter((t) => t.customerId !== args.where.customerId);
-        writeMockDb(mockDb);
-        return { count: before - mockDb.resetTokens.length };
-      } else {
-        return await prismaClient!.passwordResetToken.deleteMany({
-          where: args.where,
-        });
+        const customers = await prismaClient!.customer.findMany(args);
+        return customers as unknown as Customer[];
       }
     },
   },

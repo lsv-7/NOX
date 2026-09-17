@@ -86,11 +86,13 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
+      mustChangePassword: Boolean(customer.mustChangePassword),
       customer: {
         id: customer.id,
         name: customer.name,
         email: customer.email,
         phone: customer.phone,
+        mustChangePassword: Boolean(customer.mustChangePassword),
       },
     });
   } catch (error: unknown) {

@@ -30,6 +30,7 @@ export async function GET() {
         name: customer.name,
         email: customer.email,
         phone: customer.phone,
+        mustChangePassword: Boolean(customer.mustChangePassword),
       },
     });
   } catch (error: unknown) {

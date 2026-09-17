@@ -110,6 +110,7 @@ export default function ProductView({
     name: string;
     email: string;
     phone: string;
+    mustChangePassword?: boolean;
   }
 
   interface CustomerOrderItem {
@@ -141,14 +142,19 @@ export default function ProductView({
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
   // Auth Form State (for both Tracking section and Checkout login)
-  const [authMode, setAuthMode] = useState<"login" | "register" | "forgot">("login");
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authLoginId, setAuthLoginId] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [regName, setRegName] = useState("");
   const [regPhone, setRegPhone] = useState("");
   const [regEmail, setRegEmail] = useState("");
   const [regPassword, setRegPassword] = useState("");
-  const [forgotInput, setForgotInput] = useState("");
+  const [showForgotSupportModal, setShowForgotSupportModal] = useState(false);
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [newPermPassword, setNewPermPassword] = useState("");
+  const [confirmPermPassword, setConfirmPermPassword] = useState("");
+  const [changePasswordSubmitting, setChangePasswordSubmitting] = useState(false);
+  const [changePasswordError, setChangePasswordError] = useState<string | null>(null);
 
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSuccess, setAuthSuccess] = useState<string | null>(null);
@@ -192,6 +198,9 @@ export default function ProductView({
             setCustomer(data.customer);
             setCustomerName((prev: string) => prev || data.customer.name);
             setPhone((prev: string) => prev || data.customer.phone);
+            if (data.customer.mustChangePassword) {
+              setShowChangePasswordModal(true);
+            }
             const ordersRes = await fetch("/api/orders");
             if (ordersRes.ok && mounted) {
               const ordersData = await ordersRes.json();
@@ -238,6 +247,9 @@ export default function ProductView({
         setPhone(data.customer.phone);
         setAuthPassword("");
         setAuthSuccess("Successfully signed in!");
+        if (data.mustChangePassword || data.customer?.mustChangePassword) {
+          setShowChangePasswordModal(true);
+        }
         await loadCustomerOrders();
       } else {
         setAuthError(data.error || "Invalid credentials");
@@ -295,38 +307,40 @@ export default function ProductView({
     }
   };
 
-  const handleCustomerForgot = async (e: React.FormEvent) => {
+  const handleChangePermanentPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    setAuthError(null);
-    setAuthSuccess(null);
-
-    if (!forgotInput.trim()) {
-      setAuthError("Please enter your registered email or phone number");
+    setChangePasswordError(null);
+    if (!newPermPassword || newPermPassword.length < 8) {
+      setChangePasswordError("Password must be at least 8 characters long");
+      return;
+    }
+    if (newPermPassword !== confirmPermPassword) {
+      setChangePasswordError("Passwords do not match");
       return;
     }
 
-    setAuthSubmitting(true);
+    setChangePasswordSubmitting(true);
     try {
-      const res = await fetch("/api/auth/forgot-password", {
+      const res = await fetch("/api/auth/change-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          identifier: forgotInput.trim(),
-        }),
+        body: JSON.stringify({ newPassword: newPermPassword }),
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setAuthSuccess(
-          "If an account exists with these details, password reset instructions have been generated."
-        );
+        setShowChangePasswordModal(false);
+        setNewPermPassword("");
+        setConfirmPermPassword("");
+        setAuthSuccess("Password updated successfully! Your account is now secured.");
+        setCustomer((prev) => (prev ? { ...prev, mustChangePassword: false } : null));
       } else {
-        setAuthError(data.error || "Failed to process request");
+        setChangePasswordError(data.error || "Failed to update password");
       }
     } catch (err) {
-      console.error("Forgot password error:", err);
-      setAuthError("Failed to connect to server");
+      console.error("Change password error:", err);
+      setChangePasswordError("Network error. Please try again.");
     } finally {
-      setAuthSubmitting(false);
+      setChangePasswordSubmitting(false);
     }
   };
 
@@ -1139,12 +1153,13 @@ export default function ProductView({
                       />
                     </div>
                     <div className="flex justify-between items-center pt-1">
-                      <a
-                        href="/reset-password"
-                        className="text-[10px] text-[#9D8751] hover:text-[#D4A72C] transition-colors"
+                      <button
+                        type="button"
+                        onClick={() => setShowForgotSupportModal(true)}
+                        className="text-[10px] text-[#9D8751] hover:text-[#D4A72C] transition-colors cursor-pointer"
                       >
-                        Forgot Password?
-                      </a>
+                        Forgot your password?
+                      </button>
                       <button
                         type="button"
                         onClick={handleCustomerLogin}
@@ -1349,7 +1364,7 @@ export default function ProductView({
             </p>
 
             {/* Tab Controls */}
-            <div className="flex border-b border-[rgba(212,167,44,0.22)] mb-6 justify-center gap-4 text-xs uppercase tracking-widest font-semibold">
+            <div className="flex border-b border-[rgba(212,167,44,0.22)] mb-6 justify-center gap-6 text-xs uppercase tracking-widest font-semibold">
               <button
                 type="button"
                 onClick={() => { setAuthMode("login"); setAuthError(null); setAuthSuccess(null); }}
@@ -1371,17 +1386,6 @@ export default function ProductView({
                 }`}
               >
                 Create Account
-              </button>
-              <button
-                type="button"
-                onClick={() => { setAuthMode("forgot"); setAuthError(null); setAuthSuccess(null); }}
-                className={`pb-3 transition-all border-b-2 cursor-pointer ${
-                  authMode === "forgot"
-                    ? "border-[#D4A72C] text-[#D4A72C]"
-                    : "border-transparent text-[#9D8751] hover:text-[#F5F0E6]"
-                }`}
-              >
-                Forgot Password
               </button>
             </div>
 
@@ -1432,10 +1436,10 @@ export default function ProductView({
                 <div className="flex justify-between items-center text-xs pt-1">
                   <button
                     type="button"
-                    onClick={() => { setAuthMode("forgot"); setAuthError(null); }}
+                    onClick={() => setShowForgotSupportModal(true)}
                     className="text-[11px] text-[#9D8751] hover:text-[#D4A72C] transition-colors cursor-pointer"
                   >
-                    Forgot Password?
+                    Forgot your password?
                   </button>
                   <button
                     type="submit"
@@ -1520,40 +1524,7 @@ export default function ProductView({
               </form>
             )}
 
-            {authMode === "forgot" && (
-              <form onSubmit={handleCustomerForgot} className="space-y-4 text-left">
-                <div>
-                  <label className="block text-[10px] uppercase tracking-wider text-[#D4A72C] mb-1.5 font-semibold">
-                    Registered Email or Phone
-                  </label>
-                  <input
-                    type="text"
-                    value={forgotInput}
-                    onChange={(e) => setForgotInput(e.target.value)}
-                    placeholder="Enter email or 10-digit mobile"
-                    required
-                    className="w-full text-xs bg-[#0D0E11] border border-[rgba(212,167,44,0.22)] rounded-xl px-4 py-3 focus:outline-none focus:border-[#D4A72C] text-[#F5F0E6] placeholder-[#9D8751] transition-all"
-                  />
-                </div>
 
-                <div className="pt-2 flex flex-col gap-3">
-                  <button
-                    type="submit"
-                    disabled={authSubmitting}
-                    className="w-full bg-[#D4A72C] hover:bg-[#B88A20] text-[#0D0E11] font-semibold py-3 px-6 rounded-full text-xs uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer shadow-md flex items-center justify-center gap-1.5"
-                  >
-                    {authSubmitting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Submitting...</> : "Request Password Reset"}
-                  </button>
-
-                  <a
-                    href="/reset-password"
-                    className="text-center text-[11px] text-[#D4A72C] hover:underline uppercase tracking-wider"
-                  >
-                    Have a reset token? Enter it on the reset page →
-                  </a>
-                </div>
-              </form>
-            )}
           </div>
         ) : (
           /* Logged-in State: Authenticated Order History & Live Tracking */
@@ -1789,7 +1760,135 @@ export default function ProductView({
               </button>
             </div>
           </div>
+        
+      {/* Support Contact Modal for Forgot Password */}
+      {showForgotSupportModal && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-[#0D0E11] border border-[rgba(212,167,44,0.3)] rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4 text-left">
+            <div className="flex justify-between items-center border-b border-[rgba(212,167,44,0.2)] pb-3">
+              <h4 className="font-serif text-lg text-[#F5F0E6] font-light">
+                Forgot your password?
+              </h4>
+              <button
+                type="button"
+                onClick={() => setShowForgotSupportModal(false)}
+                className="text-[#9D8751] hover:text-[#F5F0E6] text-lg font-light leading-none p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-[#9D8751] leading-relaxed">
+              Please contact NOX support to reset your account password.
+            </p>
+            <div className="p-4 bg-[#08090B] border border-[rgba(212,167,44,0.15)] rounded-xl space-y-3 text-xs">
+              <div>
+                <span className="block text-[10px] uppercase tracking-wider text-[#9D8751] font-semibold">
+                  Support Email
+                </span>
+                <a
+                  href="mailto:noxelitecosmetics@gmail.com"
+                  className="text-[#D4A72C] hover:underline font-medium"
+                >
+                  noxelitecosmetics@gmail.com
+                </a>
+              </div>
+              <div>
+                <span className="block text-[10px] uppercase tracking-wider text-[#9D8751] font-semibold">
+                  WhatsApp Support
+                </span>
+                <a
+                  href="https://wa.me/918309053090"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[#D4A72C] hover:underline font-medium"
+                >
+                  +91 8309053090
+                </a>
+              </div>
+            </div>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => setShowForgotSupportModal(false)}
+                className="w-full bg-[#D4A72C] hover:bg-[#B88A20] text-[#0D0E11] font-semibold py-2.5 rounded-full text-xs uppercase tracking-widest transition-all cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
+      )}
+
+      {/* Set Permanent Password Modal (mustChangePassword) */}
+      {showChangePasswordModal && (
+        <div className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 backdrop-blur-md">
+          <div className="bg-[#0D0E11] border border-[#D4A72C] rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-5 text-left">
+            <div className="border-b border-[rgba(212,167,44,0.2)] pb-3">
+              <h4 className="font-serif text-lg text-[#F5F0E6] font-light">
+                Set Your Permanent Password
+              </h4>
+              <p className="text-xs text-[#9D8751] mt-1 leading-relaxed">
+                An administrator has assigned a temporary password to your account. For your security, please create your new permanent password to continue.
+              </p>
+            </div>
+
+            {changePasswordError && (
+              <div className="p-3 bg-[#2A1616] border border-[#EF4444]/40 text-[#FCA5A5] rounded-xl text-xs flex gap-2 items-start">
+                <AlertCircle className="w-4 h-4 shrink-0 text-[#EF4444] mt-0.5" />
+                <span>{changePasswordError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleChangePermanentPassword} className="space-y-4">
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-[#D4A72C] mb-1 font-semibold">
+                  New Password (min 8 characters)
+                </label>
+                <input
+                  type="password"
+                  value={newPermPassword}
+                  onChange={(e) => setNewPermPassword(e.target.value)}
+                  required
+                  minLength={8}
+                  placeholder="Enter new permanent password"
+                  className="w-full text-xs bg-[#08090B] border border-[rgba(212,167,44,0.22)] rounded-xl px-4 py-3 focus:outline-none focus:border-[#D4A72C] text-[#F5F0E6] placeholder-[#9D8751]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-[#D4A72C] mb-1 font-semibold">
+                  Confirm New Password
+                </label>
+                <input
+                  type="password"
+                  value={confirmPermPassword}
+                  onChange={(e) => setConfirmPermPassword(e.target.value)}
+                  required
+                  minLength={8}
+                  placeholder="Confirm new permanent password"
+                  className="w-full text-xs bg-[#08090B] border border-[rgba(212,167,44,0.22)] rounded-xl px-4 py-3 focus:outline-none focus:border-[#D4A72C] text-[#F5F0E6] placeholder-[#9D8751]"
+                />
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={changePasswordSubmitting || newPermPassword.length < 8}
+                  className="w-full bg-[#D4A72C] hover:bg-[#B88A20] text-[#0D0E11] font-semibold py-3 rounded-full text-xs uppercase tracking-widest transition-all disabled:opacity-50 cursor-pointer shadow-lg flex items-center justify-center gap-2"
+                >
+                  {changePasswordSubmitting ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Securing Account...</>
+                  ) : (
+                    "Set Permanent Password & Continue"
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+    </div>
       )}
     </>
   );
