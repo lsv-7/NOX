@@ -1760,11 +1760,19 @@ export default function ProductView({
               </button>
             </div>
           </div>
-        
+        </div>
+      )}
+
       {/* Support Contact Modal for Forgot Password */}
       {showForgotSupportModal && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-[#0D0E11] border border-[rgba(212,167,44,0.3)] rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4 text-left">
+        <div 
+          className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setShowForgotSupportModal(false)}
+        >
+          <div 
+            className="bg-[#0D0E11] border border-[rgba(212,167,44,0.3)] rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4 text-left relative"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex justify-between items-center border-b border-[rgba(212,167,44,0.2)] pb-3">
               <h4 className="font-serif text-lg text-[#F5F0E6] font-light">
                 Forgot your password?
@@ -1772,45 +1780,53 @@ export default function ProductView({
               <button
                 type="button"
                 onClick={() => setShowForgotSupportModal(false)}
-                className="text-[#9D8751] hover:text-[#F5F0E6] text-lg font-light leading-none p-1 cursor-pointer"
+                className="text-[#9D8751] hover:text-[#F5F0E6] text-xl font-light leading-none p-1 cursor-pointer transition-colors"
+                aria-label="Close"
               >
                 ✕
               </button>
             </div>
-            <p className="text-xs text-[#9D8751] leading-relaxed">
-              Please contact NOX support to reset your account password.
+
+            <p className="text-xs text-[#CFC5B4] leading-relaxed">
+              Please contact the NOX Administrator to reset your account password.
             </p>
+
             <div className="p-4 bg-[#08090B] border border-[rgba(212,167,44,0.15)] rounded-xl space-y-3 text-xs">
               <div>
-                <span className="block text-[10px] uppercase tracking-wider text-[#9D8751] font-semibold">
-                  Support Email
-                </span>
-                <a
-                  href="mailto:noxelitecosmetics@gmail.com"
-                  className="text-[#D4A72C] hover:underline font-medium"
-                >
-                  noxelitecosmetics@gmail.com
-                </a>
-              </div>
-              <div>
-                <span className="block text-[10px] uppercase tracking-wider text-[#9D8751] font-semibold">
+                <span className="block text-[10px] uppercase tracking-wider text-[#9D8751] font-semibold mb-0.5">
                   WhatsApp Support
                 </span>
                 <a
                   href="https://wa.me/918309053090"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-[#D4A72C] hover:underline font-medium"
+                  className="text-[#D4A72C] hover:underline font-medium text-sm flex items-center gap-1.5"
                 >
                   +91 8309053090
                 </a>
               </div>
+              <div>
+                <span className="block text-[10px] uppercase tracking-wider text-[#9D8751] font-semibold mb-0.5">
+                  Email Support
+                </span>
+                <a
+                  href="mailto:noxelitecosmetics@gmail.com"
+                  className="text-[#D4A72C] hover:underline font-medium text-xs break-all"
+                >
+                  noxelitecosmetics@gmail.com
+                </a>
+              </div>
             </div>
+
+            <p className="text-[11px] text-[#9D8751] leading-relaxed">
+              The administrator will provide a secure temporary password. Once you log in, you will be prompted to establish your private permanent password.
+            </p>
+
             <div className="pt-2">
               <button
                 type="button"
                 onClick={() => setShowForgotSupportModal(false)}
-                className="w-full bg-[#D4A72C] hover:bg-[#B88A20] text-[#0D0E11] font-semibold py-2.5 rounded-full text-xs uppercase tracking-widest transition-all cursor-pointer"
+                className="w-full bg-[#D4A72C] hover:bg-[#B88A20] text-[#0D0E11] font-semibold py-2.5 rounded-full text-xs uppercase tracking-widest transition-all cursor-pointer shadow-md"
               >
                 Close
               </button>
@@ -1821,7 +1837,7 @@ export default function ProductView({
 
       {/* Set Permanent Password Modal (mustChangePassword) */}
       {showChangePasswordModal && (
-        <div className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 backdrop-blur-md">
+        <div className="fixed inset-0 bg-black/85 z-[70] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-150">
           <div className="bg-[#0D0E11] border border-[#D4A72C] rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-5 text-left">
             <div className="border-b border-[rgba(212,167,44,0.2)] pb-3">
               <h4 className="font-serif text-lg text-[#F5F0E6] font-light">
@@ -1886,9 +1902,6 @@ export default function ProductView({
             </form>
           </div>
         </div>
-      )}
-
-    </div>
       )}
     </>
   );
