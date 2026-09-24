@@ -111,7 +111,17 @@ export async function POST(request: Request) {
     try {
       razorpayOrder = await razorpayHelper.createOrder(totalAmountPaise, orderId);
     } catch (error: unknown) {
-      const errMsg = error instanceof Error ? error.message : "Unknown error";
+      let errMsg = "Unknown error";
+      if (error instanceof Error) {
+        errMsg = error.message;
+      } else if (typeof error === "object" && error !== null) {
+        const rzpObj = error as { statusCode?: number; error?: { description?: string; code?: string } };
+        if (rzpObj.error && typeof rzpObj.error === "object") {
+          errMsg = `[${rzpObj.statusCode || 500}] ${rzpObj.error.code || "ERROR"}: ${rzpObj.error.description || JSON.stringify(rzpObj.error)}`;
+        } else {
+          errMsg = JSON.stringify(error);
+        }
+      }
       console.error("Razorpay order creation failed:", errMsg);
       return NextResponse.json({ error: "Failed to initialize payment gateway" }, { status: 500 });
     }
@@ -141,7 +151,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Failed to record order details" }, { status: 500 });
     }
 
-    const razorpayKeyId = process.env.RAZORPAY_KEY_ID;
+    const rawRazorpayKeyId = process.env.RAZORPAY_KEY_ID;
+    const razorpayKeyId = rawRazorpayKeyId?.trim().replace(/^["']|["']$/g, "");
     if (!razorpayKeyId && process.env.NODE_ENV === "production") {
       console.error("Missing RAZORPAY_KEY_ID in production environment");
       return NextResponse.json({ error: "Payment gateway configuration error" }, { status: 500 });

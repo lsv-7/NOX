@@ -36,8 +36,11 @@ export const razorpayHelper = {
       };
     }
 
-    const keyId = process.env.RAZORPAY_KEY_ID;
-    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+    const rawKeyId = process.env.RAZORPAY_KEY_ID;
+    const rawKeySecret = process.env.RAZORPAY_KEY_SECRET;
+
+    const keyId = rawKeyId?.trim().replace(/^["']|["']$/g, "");
+    const keySecret = rawKeySecret?.trim().replace(/^["']|["']$/g, "");
 
     if (!keyId || !keySecret) {
       throw new Error("Razorpay API credentials (RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET) are missing.");
@@ -68,7 +71,8 @@ export const razorpayHelper = {
       return razorpaySignature === "mock_signature" || razorpaySignature.startsWith("mock_sig_");
     }
 
-    const keySecret = process.env.RAZORPAY_KEY_SECRET;
+    const rawKeySecret = process.env.RAZORPAY_KEY_SECRET;
+    const keySecret = rawKeySecret?.trim().replace(/^["']|["']$/g, "");
     if (!keySecret) {
       throw new Error("Razorpay secret key is missing.");
     }
@@ -95,7 +99,8 @@ export const razorpayHelper = {
       return signature === "mock_webhook_signature" || signature.startsWith("mock_web_");
     }
 
-    const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    const rawWebhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    const webhookSecret = rawWebhookSecret?.trim().replace(/^["']|["']$/g, "");
     if (!webhookSecret) {
       throw new Error("Razorpay webhook secret (RAZORPAY_WEBHOOK_SECRET) is missing.");
     }
